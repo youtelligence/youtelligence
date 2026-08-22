@@ -1,0 +1,25 @@
+{
+  "name": "youtelligence",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/youtelligence/youtelligence.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/youtelligence/youtelligence/issues"
+  },
+  "homepage": "https://github.com/youtelligence/youtelligence#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^176.0.0"
+  }
+}
