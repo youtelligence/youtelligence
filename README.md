@@ -13,10 +13,14 @@ It also exports `getValidAccessToken(clientName)`, which reads the stored tokens
 
 `analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored.
 
+`create_reporting_job.js` uses `getValidAccessToken` to call the YouTube Reporting API (`youtubereporting` v1) and create a recurring bulk report job for the `channel_reach_basic_a1` report type. Report files aren't available immediately — there's typically a delay of a day or more before the first one is generated. There isn't yet a script to list/download the generated report files.
+
+The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`) to hold per-video daily impressions and click-through rate once that download script exists — one row per `(video_id, report_date)`, plus a `pulled_at` timestamp.
+
 ## Setup
 
 1. `npm install`
-2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`).
+2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`).
 3. Create a `.env` file with:
    ```
    GOOGLE_CLIENT_ID=...
@@ -40,4 +44,10 @@ Once tokens are stored, fetch analytics without re-authenticating:
 
 ```
 node analytics.js
+```
+
+Create the `channel_reach_basic_a1` reporting job (only needs to be run once — rerunning creates a duplicate job, since the script doesn't check for an existing one):
+
+```
+node create_reporting_job.js
 ```
