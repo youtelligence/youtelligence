@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/youtelligence/youtelligence#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "dotenv": "^17.4.2",
     "googleapis": "^176.0.0"
   }
