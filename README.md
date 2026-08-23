@@ -12,7 +12,7 @@
 - `getAuthUrl()` / `handleOAuthCallback(code, clientName)` — used by `index.js`'s routes above. `handleOAuthCallback` upserts tokens into the `oauth_tokens` Supabase table, keyed by `client_name` (refresh token is only overwritten when Google actually returns a new one, since it's only issued on first consent).
 - `getValidAccessToken(clientName)` — reads the stored tokens from Supabase and transparently refreshes (and re-persists) the access token if it's expired. Used by `analytics.js` and `create_reporting_job.js`.
 
-**Note:** the redirect URI is derived as `http://localhost:${PORT}/oauth2callback`, so it must match whatever's registered as an Authorized redirect URI in Google Cloud Console for the `PORT` you run with.
+**Note:** the redirect URI defaults to `http://localhost:${PORT}/oauth2callback` for local development. Set `REDIRECT_URI` in deployed environments (e.g. Railway) to the public callback URL. Either way, it must match whatever's registered as an Authorized redirect URI in Google Cloud Console.
 
 `analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored.
 
@@ -30,8 +30,9 @@ The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`)
    GOOGLE_CLIENT_SECRET=...
    SUPABASE_URL=...
    SUPABASE_SERVICE_ROLE_KEY=...
+   REDIRECT_URI=...  # optional; only needed outside local dev, e.g. https://<app>.up.railway.app/oauth2callback
    ```
-4. In the Google Cloud Console, add `http://localhost:3000/oauth2callback` as an Authorized redirect URI on that OAuth client.
+4. In the Google Cloud Console, add the callback URL as an Authorized redirect URI on that OAuth client — `http://localhost:3000/oauth2callback` for local dev, plus your Railway URL's `/oauth2callback` for deployment.
 
 ## Run
 

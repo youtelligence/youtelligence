@@ -9,7 +9,9 @@ const supabase = createClient(
 
 const PORT = process.env.PORT || 3000;
 // Must exactly match an "Authorized redirect URI" on the OAuth client in Google Cloud Console.
-const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
+// Set REDIRECT_URI in deployed environments (e.g. Railway) to the public callback URL;
+// it defaults to localhost for local development.
+const REDIRECT_URI = process.env.REDIRECT_URI || `http://localhost:${PORT}/oauth2callback`;
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/yt-analytics.readonly',
