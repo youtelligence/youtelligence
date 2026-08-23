@@ -2,14 +2,17 @@
 
 ## What's built so far
 
-`auth.js` runs a local OAuth2 flow against the YouTube Data API and persists tokens to Supabase:
+`index.js` is an Express server (listens on `process.env.PORT`, defaulting to `3000`) exposing the OAuth2 flow against the YouTube Data API as web routes:
 
-1. Starts a local server on `http://localhost:3000` and opens the browser to Google's consent screen (scopes: `youtube.readonly`, `yt-analytics.readonly`).
-2. On the `/oauth2callback` redirect, exchanges the auth code for an access/refresh token pair.
-3. Upserts the tokens into the `oauth_tokens` Supabase table, keyed by `client_name` (refresh token is only overwritten when Google actually returns a new one, since it's only issued on first consent).
-4. Calls `channels.list` with `mine=true` and prints the authenticated user's channel title and subscriber count.
+- `GET /auth` — redirects the browser to Google's consent screen (scopes: `youtube.readonly`, `yt-analytics.readonly`).
+- `GET /oauth2callback` — exchanges the auth code for an access/refresh token pair, saves them to Supabase, and responds with the authenticated channel's title and subscriber count.
 
-It also exports `getValidAccessToken(clientName)`, which reads the stored tokens from Supabase and transparently refreshes (and re-persists) the access token if it's expired.
+`auth.js` holds the underlying OAuth logic as reusable functions (no longer a standalone script):
+
+- `getAuthUrl()` / `handleOAuthCallback(code, clientName)` — used by `index.js`'s routes above. `handleOAuthCallback` upserts tokens into the `oauth_tokens` Supabase table, keyed by `client_name` (refresh token is only overwritten when Google actually returns a new one, since it's only issued on first consent).
+- `getValidAccessToken(clientName)` — reads the stored tokens from Supabase and transparently refreshes (and re-persists) the access token if it's expired. Used by `analytics.js` and `create_reporting_job.js`.
+
+**Note:** the redirect URI is derived as `http://localhost:${PORT}/oauth2callback`, so it must match whatever's registered as an Authorized redirect URI in Google Cloud Console for the `PORT` you run with.
 
 `analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored.
 
@@ -33,12 +36,10 @@ The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`)
 ## Run
 
 ```
-node auth.js
+node index.js
 ```
 
-Approve access in the browser tab that opens. The script logs the token response, saves it to Supabase, then prints the channel title and subscriber count.
-
-**Note:** the script logs the raw access token to stdout — treat that output as a credential and don't share it.
+Then visit `http://localhost:3000/auth` (or whatever `PORT` you set) and approve access. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
 
 Once tokens are stored, fetch analytics without re-authenticating:
 

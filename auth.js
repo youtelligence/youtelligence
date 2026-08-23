@@ -1,84 +1,73 @@
 require('dotenv').config();
 const { google } = require('googleapis');
 const { createClient } = require('@supabase/supabase-js');
-const http = require('http');
-const { exec } = require('child_process');
-const url = require('url');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+const PORT = process.env.PORT || 3000;
 // Must exactly match an "Authorized redirect URI" on the OAuth client in Google Cloud Console.
-const REDIRECT_URI = 'http://localhost:3000/oauth2callback';
+const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/yt-analytics.readonly',
 ];
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  REDIRECT_URI
-);
+function createOAuthClient() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    REDIRECT_URI
+  );
+}
 
-function runConsentFlow() {
-  const authUrl = oauth2Client.generateAuthUrl({
+function getAuthUrl() {
+  return createOAuthClient().generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
     scope: SCOPES,
   });
+}
 
-  const server = http.createServer(async (req, res) => {
-    const reqUrl = url.parse(req.url, true);
-    if (reqUrl.pathname !== '/oauth2callback') return;
+// Exchanges an OAuth code for tokens, saves them to Supabase under
+// clientName, and returns the authenticated user's channel title and
+// subscriber count.
+async function handleOAuthCallback(code, clientName) {
+  const oauth2Client = createOAuthClient();
+  const { tokens } = await oauth2Client.getToken(code);
+  oauth2Client.setCredentials(tokens);
 
-    const code = reqUrl.query.code;
-    res.end('Authentication successful! You can close this tab.');
-    server.close();
+  const tokenRow = {
+    client_name: clientName,
+    access_token: tokens.access_token,
+    expires_at: new Date(tokens.expiry_date).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  // Google only returns refresh_token on first consent; omit the key so an
+  // upsert on a later run doesn't null out the one already stored.
+  if (tokens.refresh_token) {
+    tokenRow.refresh_token = tokens.refresh_token;
+  }
 
-    const { tokens } = await oauth2Client.getToken(code);
-    console.log(tokens);
-    oauth2Client.setCredentials(tokens);
+  const { error: upsertError } = await supabase
+    .from('oauth_tokens')
+    .upsert(tokenRow, { onConflict: 'client_name' });
 
-    const tokenRow = {
-      client_name: 'my channel',
-      access_token: tokens.access_token,
-      expires_at: new Date(tokens.expiry_date).toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    // Google only returns refresh_token on first consent; omit the key so an
-    // upsert on a later run doesn't null out the one already stored.
-    if (tokens.refresh_token) {
-      tokenRow.refresh_token = tokens.refresh_token;
-    }
+  if (upsertError) throw upsertError;
 
-    const { error: upsertError } = await supabase
-      .from('oauth_tokens')
-      .upsert(tokenRow, { onConflict: 'client_name' });
-
-    if (upsertError) {
-      console.error('Failed to save tokens to Supabase:', upsertError);
-    } else {
-      console.log('Saved tokens to Supabase.');
-    }
-
-    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
-    const { data } = await youtube.channels.list({
-      part: ['snippet', 'statistics'],
-      mine: true,
-    });
-
-    const channel = data.items[0];
-    console.log(`Channel: ${channel.snippet.title}`);
-    console.log(`Subscribers: ${channel.statistics.subscriberCount}`);
+  const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+  const { data } = await youtube.channels.list({
+    part: ['snippet', 'statistics'],
+    mine: true,
   });
 
-  server.listen(3000, () => {
-    exec(`open "${authUrl}"`);
-    console.log('Opening browser for Google consent...');
-  });
+  const channel = data.items[0];
+  return {
+    title: channel.snippet.title,
+    subscriberCount: channel.statistics.subscriberCount,
+  };
 }
 
 // Returns a valid access token for clientName, refreshing and persisting a
@@ -100,11 +89,7 @@ async function getValidAccessToken(clientName) {
     return row.access_token;
   }
 
-  const refreshClient = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    REDIRECT_URI
-  );
+  const refreshClient = createOAuthClient();
   refreshClient.setCredentials({ refresh_token: row.refresh_token });
 
   const { token: newAccessToken } = await refreshClient.getAccessToken();
@@ -124,8 +109,4 @@ async function getValidAccessToken(clientName) {
   return newAccessToken;
 }
 
-if (require.main === module) {
-  runConsentFlow();
-}
-
-module.exports = { getValidAccessToken };
+module.exports = { getAuthUrl, handleOAuthCallback, getValidAccessToken };
