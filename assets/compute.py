@@ -53,6 +53,9 @@ def recompute_video(video):
     return video
 
 
+VALID_DIAGNOSES = {"discovery", "satisfaction", "mixed", "insufficient_data"}
+
+
 def validate_video(video, label):
     errors = []
 
@@ -66,6 +69,28 @@ def validate_video(video, label):
         total_pct = sum(source.get("percentage") or 0 for source in split.values())
         if abs(total_pct - 100) > 0.5:
             errors.append(f"{label}: traffic_source_split percentages sum to {total_pct}, expected ~100")
+
+    data_source = video.get("data_source")
+    if (video.get("ctr") is not None or video.get("impressions") is not None) and data_source != "analytics_api":
+        errors.append(
+            f"{label}: has ctr/impressions but data_source is '{data_source}', expected 'analytics_api'"
+        )
+
+    return errors
+
+
+def validate_pairs(pairs, known_video_ids):
+    errors = []
+    for i, pair in enumerate(pairs):
+        label = f"pairs[{i}] ({pair.get('label', '?')})"
+
+        for video_id in pair.get("video_refs", []):
+            if video_id not in known_video_ids:
+                errors.append(f"{label}: video_refs references unknown video_id '{video_id}'")
+
+        diagnosis = pair.get("diagnosis")
+        if diagnosis not in VALID_DIAGNOSES:
+            errors.append(f"{label}: diagnosis '{diagnosis}' is not one of {sorted(VALID_DIAGNOSES)}")
 
     return errors
 
@@ -98,10 +123,12 @@ def main():
 
     rows = []
     errors = []
+    known_video_ids = set()
 
     client_name = (findings.get("client") or {}).get("name", "client")
     for video in findings.get("client_videos", []):
         recompute_video(video)
+        known_video_ids.add(video.get("video_id"))
         label = f"client video {video.get('video_id', '?')}"
         errors.extend(validate_video(video, label))
         rows.append((
@@ -116,6 +143,7 @@ def main():
     for competitor in findings.get("competitors", []):
         for video in competitor.get("videos", []):
             recompute_video(video)
+            known_video_ids.add(video.get("video_id"))
             label = f"{competitor.get('channel_name', '?')} video {video.get('video_id', '?')}"
             errors.extend(validate_video(video, label))
             rows.append((
@@ -131,6 +159,8 @@ def main():
         ["Type", "Channel", "Title", "Views/day", "Like rate %", "Comment rate %"],
         rows,
     )
+
+    errors.extend(validate_pairs(findings.get("pairs", []), known_video_ids))
 
     if errors:
         print("\nValidation failed — not saving:")
