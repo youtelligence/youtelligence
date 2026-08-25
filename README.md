@@ -36,16 +36,16 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
 
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
 2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
-3. **Compute** — `assets/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
-4. **Report** — `assets/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
-5. **Workbook** — `assets/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
+3. **Compute** — `reports/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
+4. **Report** — `reports/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
+5. **Workbook** — `reports/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
 6. **Deck** — `assets/build_deck.js` loops `findings.json`'s `pairs`, resolves each pair's `video_refs` to full video data, downloads each video's thumbnail (`test_thumbnail.js`'s resolution/download logic, cached under `thumbnails/`), and renders one slide per pair using `assets/slide_template.js`'s layout (`deck.pptx`) — real titles, stats, and thumbnails in place of the template's hardcoded example. The higher-`views_per_day` video in a pair gets the "higher performer" badge; the takeaway strip is the pair's own `notes`. Only handles pairs with exactly 2 `video_refs` — anything else is skipped with a warning, since the template is a two-column layout.
 
 **Note:** `findings.json`, `report.md`, `workbook.xlsx`, `deck.pptx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled. Downloaded thumbnails (`*.jpg`, including everything under `thumbnails/`) are gitignored too.
 
 ## Setup
 
-1. `npm install`, then `pip3 install -r requirements.txt` (openpyxl, needed for `build_workbook.py`; `compute.py` and `build_report.py` are stdlib-only).
+1. `npm install`, then `pip3 install -r reports/requirements.txt` (openpyxl, needed for `build_workbook.py`; `compute.py` and `build_report.py` are stdlib-only).
 2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`).
 3. Create a `.env` file with:
    ```
@@ -94,9 +94,9 @@ Run the audit pipeline (in order) once `client_videos`/`competitors` data has be
 
 ```
 node assemble_findings.js
-python3 assets/compute.py
-python3 assets/build_report.py
-python3 assets/build_workbook.py
+python3 reports/compute.py
+python3 reports/build_report.py
+python3 reports/build_workbook.py
 node assets/build_deck.js
 ```
 
