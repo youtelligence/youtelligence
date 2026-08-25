@@ -1,6 +1,6 @@
 # findings.json schema
 
-Structure for the per-client output file produced by an audit run. Top-level keys: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`.
+Structure for the per-client output file produced by an audit run. Top-level keys: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, `headline_finding`, `ruled_out`, `recommendations`.
 
 ## `client`
 
@@ -86,6 +86,16 @@ Array of objects. A pair is a comparison between videos (client vs. competitor, 
 
 Array of strings. Metrics the audit would want but that aren't obtainable even with the client's OAuth access — i.e. asks for the studio/client to provide manually (not an API gap that more scopes would fix).
 
+## Judgment-call fields
+
+`headline_finding`, `ruled_out`, and `recommendations` are written by a person reviewing the data, not calculated from it — nothing in `client_videos`, `competitors`, or `pairs` mechanically determines them. A report generator should read them as-is rather than trying to derive them.
+
+| Field | Type | Notes |
+|---|---|---|
+| `headline_finding` | string | The one-sentence editorial takeaway of the whole audit. |
+| `ruled_out` | string[] | Explanations someone considered and rejected (e.g. tag density, a channel-level penalty) — each entry is a self-contained paragraph. |
+| `recommendations` | string[] | Actions to take, in priority order — each entry is a self-contained paragraph, conventionally ending with an effort/impact label in parentheses (e.g. `"... (High effort)"`). |
+
 ## Example
 
 ```json
@@ -157,6 +167,13 @@ Array of strings. Metrics the audit would want but that aren't obtainable even w
   "studio_asks": [
     "End-screen click-through by destination",
     "Audience retention graph (second-by-second), not just the average"
+  ],
+  "headline_finding": "The pentatonics format has the best reach-to-effort ratio in the library, and it's the format being published least.",
+  "ruled_out": [
+    "Upload time. Both videos went out on the same weekday within an hour of each other; time-of-day doesn't explain the gap."
+  ],
+  "recommendations": [
+    "Publish more pentatonics-format videos — it's the only format with proven cold reach. (High effort)"
   ]
 }
 ```

@@ -1,3 +1,5 @@
 .env
 node_modules
 findings.json
+report.md
+docs/example-report.md
