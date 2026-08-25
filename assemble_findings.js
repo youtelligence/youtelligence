@@ -19,6 +19,11 @@ function emptyFindings() {
     competitors: [],
     pairs: [],
     studio_asks: [],
+    // Judgment calls written by a person reviewing the data, not derived
+    // from it — this script never overwrites them once set.
+    headline_finding: null,
+    ruled_out: [],
+    recommendations: [],
   };
 }
 
