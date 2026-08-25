@@ -4,8 +4,10 @@
 
 `index.js` is an Express server (listens on `process.env.PORT`, defaulting to `3000`) exposing the OAuth2 flow against the YouTube Data API as web routes:
 
+- `GET /onboard?client=<name>` — shows a simple HTML landing page for that client, with a "Connect Your Channel" button linking to `/connect?client=<name>`. `client` is required (400s if missing).
 - `GET /connect?client=<name>` — redirects the browser to Google's consent screen (scopes: `youtube.readonly`, `yt-analytics.readonly`), passing `client` through as the OAuth `state` parameter. `client` is optional and defaults to `'my channel'` (`DEFAULT_CLIENT_NAME` in `index.js`).
-- `GET /oauth2callback` — exchanges the auth code for an access/refresh token pair, saves them to Supabase under the `client_name` from `state`, and responds with the authenticated channel's title and subscriber count.
+- `GET /oauth2callback` — exchanges the auth code for an access/refresh token pair, saves them to Supabase under the `client_name` from `state`, and responds with the authenticated channel's title/subscriber count plus a form (five text inputs, "Competitor 1" – "Competitor 5", plus a hidden `client` field carrying `state` forward) for submitting competitor handles.
+- `POST /competitors` — takes the submitted `client` and `competitor1`–`competitor5` handles (blanks ignored; 400s if `client` or every handle is missing). For each handle: looks up its channel ID/title the same way `lookup_channel_id.js` does, upserts the `(client_name, channel_id, channel_name)` pair into `competitor_channels`, then pulls and saves its recent-videos snapshot the same way `fetch_recent_videos.js` does. Reports per-handle success or failure.
 
 `auth.js` holds the underlying OAuth logic as reusable functions (no longer a standalone script):
 
@@ -24,9 +26,14 @@ The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`)
 
 This uses the YouTube Data API directly with an API key (`YOUTUBE_API_KEY`) — no OAuth needed, since it's all public data.
 
-- `lookup_channel_id.js` resolves a `@handle` to its channel ID via `channels.list({ forHandle })`.
-- `fetch_recent_videos.js` takes a channel ID, pulls its 10 most recent uploads (via the channel's uploads playlist), and for each one prints title, views, likes, comments, published date, plus normalized metrics — views/day (one decimal, matching the audit report format), like rate, and comment rate (both as percents). It then saves each video's raw and normalized stats as a row in the `competitor_snapshots` Supabase table.
-  - **Note:** `CHANNEL_NAME` is currently hardcoded to `'JB Eckl'` in the script — every pull gets tagged with that name regardless of which channel ID you pass in. Fine for now since JB Eckl is the only channel being tracked, but will need to become a parameter once a second competitor is added.
+`competitors.js` holds the underlying lookup/fetch/save logic as reusable functions:
+
+- `lookupChannelId(handle)` resolves a `@handle` to its channel ID and title via `channels.list({ forHandle })`.
+- `fetchRecentVideos(channelId)` pulls a channel's 10 most recent uploads (via the channel's uploads playlist) and returns each one's title, views, likes, comments, published date, plus normalized metrics — views/day (one decimal, matching the audit report format), like rate, and comment rate (both as percents). `channel_name` is read from the channel's own title, not hardcoded.
+- `saveSnapshots(snapshots)` inserts rows into the `competitor_snapshots` Supabase table.
+- `saveCompetitorChannel(clientName, channelId, channelName)` upserts a client/channel pair into the `competitor_channels` Supabase table, keyed on `(client_name, channel_id)`.
+
+`lookup_channel_id.js` and `fetch_recent_videos.js` are thin CLI wrappers around the first two functions (see **Run** below); the `/competitors` route in `index.js` calls all four directly.
 
 The `competitor_channels` (client/channel pairs to track) and `competitor_snapshots` (per-video stat history) Supabase tables are provisioned in `supabase/`.
 
