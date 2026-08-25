@@ -4,8 +4,8 @@
 
 `index.js` is an Express server (listens on `process.env.PORT`, defaulting to `3000`) exposing the OAuth2 flow against the YouTube Data API as web routes:
 
-- `GET /auth` — redirects the browser to Google's consent screen (scopes: `youtube.readonly`, `yt-analytics.readonly`).
-- `GET /oauth2callback` — exchanges the auth code for an access/refresh token pair, saves them to Supabase, and responds with the authenticated channel's title and subscriber count.
+- `GET /connect?client=<name>` — redirects the browser to Google's consent screen (scopes: `youtube.readonly`, `yt-analytics.readonly`), passing `client` through as the OAuth `state` parameter. `client` is optional and defaults to `'my channel'` (`DEFAULT_CLIENT_NAME` in `index.js`).
+- `GET /oauth2callback` — exchanges the auth code for an access/refresh token pair, saves them to Supabase under the `client_name` from `state`, and responds with the authenticated channel's title and subscriber count.
 
 `auth.js` holds the underlying OAuth logic as reusable functions (no longer a standalone script):
 
@@ -64,7 +64,7 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
 node index.js
 ```
 
-Then visit `http://localhost:3000/auth` (or whatever `PORT` you set) and approve access. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
+Then visit `http://localhost:3000/connect?client=<name>` (or whatever `PORT` you set) and approve access — `<name>` is the `client_name` the tokens get saved under in Supabase. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
 
 Once tokens are stored, fetch analytics without re-authenticating:
 

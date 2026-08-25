@@ -25,11 +25,12 @@ function createOAuthClient() {
   );
 }
 
-function getAuthUrl() {
+function getAuthUrl(state) {
   return createOAuthClient().generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
     scope: SCOPES,
+    state,
   });
 }
 
