@@ -14,6 +14,27 @@ function createYoutubeClient() {
   return google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY });
 }
 
+// Parses whatever a user might paste into a competitor field: a bare handle
+// (with or without the leading @), a handle-style URL
+// (youtube.com/@handle[/videos]), or a /channel/<id> URL. /channel/ URLs
+// already carry a real channel ID, so they're returned as-is rather than
+// being run through the @handle lookup.
+function parseCompetitorInput(input) {
+  const trimmed = input.trim();
+
+  const channelUrlMatch = trimmed.match(/youtube\.com\/channel\/([^/?#]+)/i);
+  if (channelUrlMatch) {
+    return { channelId: channelUrlMatch[1] };
+  }
+
+  const handleUrlMatch = trimmed.match(/youtube\.com\/(@[^/?#]+)/i);
+  if (handleUrlMatch) {
+    return { handle: handleUrlMatch[1] };
+  }
+
+  return { handle: trimmed };
+}
+
 // Resolves a @handle to its channel id and title.
 async function lookupChannelId(handle) {
   const youtube = createYoutubeClient();
@@ -28,6 +49,23 @@ async function lookupChannelId(handle) {
   }
 
   return { id: channel.id, title: channel.snippet.title };
+}
+
+// Fetches a channel's title directly by ID, for inputs that already carry a
+// real channel ID (e.g. /channel/ URLs) -- no @handle lookup involved.
+async function getChannelTitle(channelId) {
+  const youtube = createYoutubeClient();
+  const { data } = await youtube.channels.list({
+    part: ['snippet'],
+    id: [channelId],
+  });
+
+  const channel = data.items && data.items[0];
+  if (!channel) {
+    throw new Error(`No channel found for id ${channelId}`);
+  }
+
+  return channel.snippet.title;
 }
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -123,4 +161,11 @@ async function saveCompetitorChannel(clientName, channelId, channelName) {
   if (error) throw error;
 }
 
-module.exports = { lookupChannelId, fetchRecentVideos, saveSnapshots, saveCompetitorChannel };
+module.exports = {
+  parseCompetitorInput,
+  lookupChannelId,
+  getChannelTitle,
+  fetchRecentVideos,
+  saveSnapshots,
+  saveCompetitorChannel,
+};

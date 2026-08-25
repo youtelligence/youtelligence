@@ -1,7 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const { getAuthUrl, handleOAuthCallback } = require('./auth.js');
-const { lookupChannelId, fetchRecentVideos, saveSnapshots, saveCompetitorChannel } = require('./competitors.js');
+const {
+  parseCompetitorInput,
+  lookupChannelId,
+  getChannelTitle,
+  fetchRecentVideos,
+  saveSnapshots,
+  saveCompetitorChannel,
+} = require('./competitors.js');
 
 const DEFAULT_CLIENT_NAME = 'my channel';
 const NUM_COMPETITOR_FIELDS = 5;
@@ -111,7 +118,15 @@ app.post('/competitors', async (req, res) => {
   const results = [];
   for (const handle of handles) {
     try {
-      const { id: channelId, title } = await lookupChannelId(handle);
+      const parsed = parseCompetitorInput(handle);
+      let channelId, title;
+      if (parsed.channelId) {
+        channelId = parsed.channelId;
+        title = await getChannelTitle(channelId);
+      } else {
+        ({ id: channelId, title } = await lookupChannelId(parsed.handle));
+      }
+
       await saveCompetitorChannel(client, channelId, title);
       const snapshots = await fetchRecentVideos(channelId);
       await saveSnapshots(snapshots);
