@@ -30,9 +30,22 @@ This uses the YouTube Data API directly with an API key (`YOUTUBE_API_KEY`) — 
 
 The `competitor_channels` (client/channel pairs to track) and `competitor_snapshots` (per-video stat history) Supabase tables are provisioned in `supabase/`.
 
+### Audit pipeline (findings.json)
+
+The end-to-end pipeline that turns pulled data into a client deliverable. Stages 1–5 are built and working; stage 6 is not started.
+
+1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
+2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
+3. **Compute** — `assets/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
+4. **Report** — `assets/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
+5. **Workbook** — `assets/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
+6. **Deck** *(not started)* — turn a slide template into something data-driven that reads from `findings.json`, the same way the report and workbook scripts do.
+
+**Note:** `findings.json`, `report.md`, `workbook.xlsx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled.
+
 ## Setup
 
-1. `npm install`
+1. `npm install`, then `pip3 install -r requirements.txt` (openpyxl, needed for `build_workbook.py`; `compute.py` and `build_report.py` are stdlib-only).
 2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`).
 3. Create a `.env` file with:
    ```
@@ -75,4 +88,13 @@ Pull and save a snapshot of a channel's 10 most recent videos:
 
 ```
 node fetch_recent_videos.js <channelId>
+```
+
+Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand:
+
+```
+node assemble_findings.js
+python3 assets/compute.py
+python3 assets/build_report.py
+python3 assets/build_workbook.py
 ```
