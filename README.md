@@ -32,16 +32,16 @@ The `competitor_channels` (client/channel pairs to track) and `competitor_snapsh
 
 ### Audit pipeline (findings.json)
 
-The end-to-end pipeline that turns pulled data into a client deliverable. Stages 1–5 are built and working; stage 6 is not started.
+The end-to-end pipeline that turns pulled data into a client deliverable. All six stages are built and working.
 
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
 2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
 3. **Compute** — `assets/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
 4. **Report** — `assets/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
 5. **Workbook** — `assets/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
-6. **Deck** *(not started)* — turn a slide template into something data-driven that reads from `findings.json`, the same way the report and workbook scripts do.
+6. **Deck** — `assets/build_deck.js` loops `findings.json`'s `pairs`, resolves each pair's `video_refs` to full video data, downloads each video's thumbnail (`test_thumbnail.js`'s resolution/download logic, cached under `thumbnails/`), and renders one slide per pair using `assets/slide_template.js`'s layout (`deck.pptx`) — real titles, stats, and thumbnails in place of the template's hardcoded example. The higher-`views_per_day` video in a pair gets the "higher performer" badge; the takeaway strip is the pair's own `notes`. Only handles pairs with exactly 2 `video_refs` — anything else is skipped with a warning, since the template is a two-column layout.
 
-**Note:** `findings.json`, `report.md`, `workbook.xlsx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled.
+**Note:** `findings.json`, `report.md`, `workbook.xlsx`, `deck.pptx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled. Downloaded thumbnails (`*.jpg`, including everything under `thumbnails/`) are gitignored too.
 
 ## Setup
 
@@ -97,4 +97,11 @@ node assemble_findings.js
 python3 assets/compute.py
 python3 assets/build_report.py
 python3 assets/build_workbook.py
+node assets/build_deck.js
+```
+
+Test the thumbnail fetch/download for a single video on its own:
+
+```
+node test_thumbnail.js <videoId>
 ```
