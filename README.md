@@ -12,13 +12,13 @@
 `auth.js` holds the underlying OAuth logic as reusable functions (no longer a standalone script):
 
 - `getAuthUrl()` / `handleOAuthCallback(code, clientName)` — used by `index.js`'s routes above. `handleOAuthCallback` upserts tokens into the `oauth_tokens` Supabase table, keyed by `client_name` (refresh token is only overwritten when Google actually returns a new one, since it's only issued on first consent).
-- `getValidAccessToken(clientName)` — reads the stored tokens from Supabase and transparently refreshes (and re-persists) the access token if it's expired. Used by `analytics.js` and `create_reporting_job.js`.
+- `getValidAccessToken(clientName)` — reads the stored tokens from Supabase and transparently refreshes (and re-persists) the access token if it's expired. Used by `analytics.js`, `create_reporting_job.js`, and `assemble_findings.js`.
 
 **Note:** the redirect URI defaults to `http://localhost:${PORT}/oauth2callback` for local development. Set `REDIRECT_URI` in deployed environments (e.g. Railway) to the public callback URL. Either way, it must match whatever's registered as an Authorized redirect URI in Google Cloud Console.
 
-`analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored.
+`analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored. Takes a client name as its first CLI argument, defaulting to `'my channel'` if omitted.
 
-`create_reporting_job.js` uses `getValidAccessToken` to call the YouTube Reporting API (`youtubereporting` v1) and create a recurring bulk report job for the `channel_reach_basic_a1` report type. Report files aren't available immediately — there's typically a delay of a day or more before the first one is generated. There isn't yet a script to list/download the generated report files.
+`create_reporting_job.js` uses `getValidAccessToken` to call the YouTube Reporting API (`youtubereporting` v1) and create a recurring bulk report job for the `channel_reach_basic_a1` report type. Report files aren't available immediately — there's typically a delay of a day or more before the first one is generated. There isn't yet a script to list/download the generated report files. Takes a client name as its first CLI argument, defaulting to `'my channel'` if omitted.
 
 The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`) to hold per-video daily impressions and click-through rate once that download script exists — one row per `(video_id, report_date)`, plus a `pulled_at` timestamp.
 
@@ -42,7 +42,7 @@ The `competitor_channels` (client/channel pairs to track) and `competitor_snapsh
 The end-to-end pipeline that turns pulled data into a client deliverable. All six stages are built and working.
 
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
-2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
+2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token for a client name given as its first CLI argument, defaulting to `'my channel'`) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
 3. **Compute** — `reports/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
 4. **Report** — `reports/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
 5. **Workbook** — `reports/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
@@ -73,16 +73,16 @@ node index.js
 
 Then visit `http://localhost:3000/connect?client=<name>` (or whatever `PORT` you set) and approve access — `<name>` is the `client_name` the tokens get saved under in Supabase. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
 
-Once tokens are stored, fetch analytics without re-authenticating:
+Once tokens are stored, fetch analytics without re-authenticating (`<name>` is optional, defaulting to `'my channel'`; use whatever `client_name` you connected under):
 
 ```
-node analytics.js
+node analytics.js <name>
 ```
 
-Create the `channel_reach_basic_a1` reporting job (only needs to be run once — rerunning creates a duplicate job, since the script doesn't check for an existing one):
+Create the `channel_reach_basic_a1` reporting job (only needs to be run once per client — rerunning creates a duplicate job, since the script doesn't check for an existing one):
 
 ```
-node create_reporting_job.js
+node create_reporting_job.js <name>
 ```
 
 Look up a competitor's channel ID from their handle:
@@ -97,10 +97,10 @@ Pull and save a snapshot of a channel's 10 most recent videos:
 node fetch_recent_videos.js <channelId>
 ```
 
-Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand:
+Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand (`assemble_findings.js` also takes an optional client name, defaulting to `'my channel'`):
 
 ```
-node assemble_findings.js
+node assemble_findings.js <name>
 python3 reports/compute.py
 python3 reports/build_report.py
 python3 reports/build_workbook.py

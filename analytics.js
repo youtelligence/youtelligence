@@ -2,14 +2,15 @@ require('dotenv').config();
 const { google } = require('googleapis');
 const { getValidAccessToken } = require('./auth.js');
 
-const CLIENT_NAME = 'my channel';
+const DEFAULT_CLIENT_NAME = 'my channel';
+const clientName = process.argv[2] || DEFAULT_CLIENT_NAME;
 
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
 async function main() {
-  const accessToken = await getValidAccessToken(CLIENT_NAME);
+  const accessToken = await getValidAccessToken(clientName);
 
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });

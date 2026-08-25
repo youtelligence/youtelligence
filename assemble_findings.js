@@ -4,8 +4,9 @@ const { google } = require('googleapis');
 const { createClient } = require('@supabase/supabase-js');
 const { getValidAccessToken } = require('./auth.js');
 
-const CLIENT_NAME = 'my channel';
+const DEFAULT_CLIENT_NAME = 'my channel';
 const FINDINGS_PATH = './findings.json';
+const clientName = process.argv[2] || DEFAULT_CLIENT_NAME;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -80,7 +81,7 @@ async function buildCompetitors() {
 }
 
 async function main() {
-  const accessToken = await getValidAccessToken(CLIENT_NAME);
+  const accessToken = await getValidAccessToken(clientName);
 
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
