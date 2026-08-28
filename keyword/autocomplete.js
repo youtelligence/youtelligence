@@ -5,8 +5,15 @@
 
 const SUGGEST_URL = 'https://suggestqueries.google.com/complete/search';
 
-// Prepended to the seed term to tease out question-style and comparison queries.
-const PREFIXES = ['how', 'what', 'why', 'best', 'vs'];
+// Prepended to the seed term. These all read naturally leading a query
+// ("how to edit <seed>", "best <seed> software"), so autocomplete completes
+// them the way a person would actually type them.
+const PREFIXES = ['how', 'what', 'why', 'best'];
+
+// Appended to the seed term. Comparison phrasing puts the subject first
+// ("<seed> vs capcut"), not "vs <seed> capcut", so "vs" has to trail the
+// seed for autocomplete to fill in the competing term after it.
+const SUFFIXES = ['vs'];
 
 // A suggestion is filed under `questions` when its first word is one of these.
 const QUESTION_WORDS = new Set([
@@ -48,23 +55,30 @@ function firstWord(phrase) {
   return phrase.trim().toLowerCase().split(/\s+/)[0];
 }
 
-// Runs the seed term plus each prefixed variant through the suggest endpoint,
-// dedupes case-insensitively, drops the seed term itself, and splits the rest
-// into `questions` (first word is a question word) and `related_terms`.
+// Runs the seed term plus each prefixed and suffixed variant through the
+// suggest endpoint, dedupes case-insensitively, drops the seed term itself,
+// and splits the rest into `questions` (first word is a question word) and
+// `related_terms`.
 async function getSuggestions(seedTerm) {
   const seed = seedTerm.trim();
-  const queries = [seed, ...PREFIXES.map((p) => `${p} ${seed}`)];
+  const queries = [
+    seed,
+    ...PREFIXES.map((p) => `${p} ${seed}`),
+    ...SUFFIXES.map((s) => `${seed} ${s}`),
+  ];
 
   const batches = await Promise.all(queries.map(fetchSuggestions));
 
+  // Drop the seed and any bare query stem the endpoint echoes back
+  // uncompleted (e.g. "<seed> vs" with no competing term after it).
   const seen = new Set();
+  const queryKeys = new Set(queries.map((q) => q.toLowerCase()));
   const questions = [];
   const relatedTerms = [];
-  const seedKey = seed.toLowerCase();
 
   for (const suggestion of batches.flat()) {
     const key = suggestion.trim().toLowerCase();
-    if (!key || key === seedKey || seen.has(key)) continue;
+    if (!key || queryKeys.has(key) || seen.has(key)) continue;
     seen.add(key);
 
     if (QUESTION_WORDS.has(firstWord(suggestion))) {
