@@ -5,7 +5,8 @@ create table if not exists keyword_lookups (
   created_at timestamptz not null default now()
 );
 
--- Lookups are read back by normalized term, newest first, within a cache window.
+-- Lookups are read back by normalized term, newest first, filtered to rows
+-- created on the current UTC date (the cache resets at 00:00 UTC daily).
 create index if not exists keyword_lookups_term_created_idx
   on keyword_lookups (term, created_at desc);
 

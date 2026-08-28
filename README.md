@@ -63,7 +63,7 @@ The pipeline lives in `keyword/`, one file per concern, orchestrated by `keyword
 - `competitiveness.js` — `search.list` (100 units) for the seed term, then `videos.list` and one batched `channels.list` (~1 unit each) for view counts, publish dates, and subscriber counts. Computes `view_velocity` (views ÷ days since publish) per video and a rank-weighted, log-scaled 0–100 `score` across the top 10 (higher velocity = more competitive). Uses its own dedicated key, `YOUTUBE_API_KEY_KEYWORD_TOOL` — restrict it to YouTube Data API v3 only in the Cloud Console so this tool's quota stays isolated from `YOUTUBE_API_KEY`.
 - `hashtags.js` — ranks `snippet.tags` from the videos `competitiveness.js` already fetched by how many of the top 10 carry each tag, normalizes them to `#hashtags`, returns the top N (default 15). No extra API calls.
 - `volume.js` — stubbed: always returns `{ value: null, source: "google_ads" }`. Built to be swapped for a Keyword Planner `GenerateKeywordIdeas` call later without touching the other modules.
-- `cache.js` — before any YouTube call, `pipeline.js` checks `keyword_lookups` for a row for the normalized term (lowercased, trimmed, whitespace-collapsed) within the cache window (7 days, override with `KEYWORD_CACHE_WINDOW_DAYS`). A hit is returned with `cached: true` and skips all API calls; a miss runs the pipeline, writes the payload to `keyword_lookups`, and returns it with `cached: false`. This table doubles as search history.
+- `cache.js` — before any YouTube call, `pipeline.js` checks `keyword_lookups` for a row for the normalized term (lowercased, trimmed, whitespace-collapsed) whose `created_at` falls on the current UTC calendar date. The cache resets at 00:00 UTC each day rather than expiring a fixed span after it was written — a lookup at 23:58 UTC and the same term at 00:02 UTC are different days and both hit the live API. A hit is returned with `cached: true` and skips all API calls; a miss runs the pipeline, writes the payload to `keyword_lookups`, and returns it with `cached: false`. This table doubles as search history.
 
 Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day before the ceiling — the cache keeps real usage well under that.
 
@@ -80,7 +80,6 @@ Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day be
    YOUTUBE_API_KEY=...  # for lookup_channel_id.js and fetch_recent_videos.js
    YOUTUBE_API_KEY_KEYWORD_TOOL=...  # separate key, restricted to YouTube Data API v3, for the keyword research tool
    REDIRECT_URI=...  # optional; only needed outside local dev, e.g. https://<app>.up.railway.app/oauth2callback
-   KEYWORD_CACHE_WINDOW_DAYS=7  # optional; how long a cached keyword lookup stays fresh
    ```
 4. In the Google Cloud Console, add the callback URL as an Authorized redirect URI on that OAuth client — `http://localhost:3000/oauth2callback` for local dev, plus your Railway URL's `/oauth2callback` for deployment.
 
