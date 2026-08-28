@@ -93,6 +93,9 @@ const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 
 const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '—');
+// Cache freshness is a UTC calendar day, so show cached_at in UTC.
+const fmtUtcDate = (iso) => new Date(iso).toISOString().slice(0, 10);
+const fmtUtcDateTime = (iso) => `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 
 function pills(container, items) {
   container.innerHTML = '';
@@ -114,12 +117,12 @@ function render(data) {
   if (data.cached) {
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = 'cached';
+    badge.textContent = `cached · ${fmtUtcDate(data.cached_at)}`;
     heading.appendChild(badge);
   }
 
   document.getElementById('result-meta').textContent = data.cached
-    ? `Served from cache (stored ${new Date(data.cached_at).toLocaleString()})`
+    ? `Served from cache — stored ${fmtUtcDateTime(data.cached_at)}; cache resets at 00:00 UTC`
     : 'Fresh lookup';
 
   document.getElementById('score').textContent = data.competitiveness.score;
