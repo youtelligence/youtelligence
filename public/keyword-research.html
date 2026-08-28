@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Keyword Research</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 2rem; max-width: 960px; margin-inline: auto;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  form { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+  input[type="text"] { flex: 1; padding: .55rem .7rem; font-size: 1rem; }
+  button { padding: .55rem 1.1rem; font-size: 1rem; cursor: pointer; }
+  button[disabled] { cursor: progress; opacity: .6; }
+  section { margin: 1.5rem 0; }
+  h2 { font-size: 1.05rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
+  .pills span {
+    display: inline-block; margin: .2rem .3rem .2rem 0; padding: .25rem .6rem;
+    background: #8882; border-radius: 1rem; font-size: .9rem;
+  }
+  ul { margin: .5rem 0; padding-left: 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #8883; }
+  th { font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .meta { color: #8889; font-size: .85rem; }
+  .score { font-size: 1.6rem; font-weight: 700; }
+  .badge {
+    display: inline-block; padding: .1rem .5rem; border-radius: .3rem;
+    background: #f5a62333; font-size: .8rem; margin-left: .5rem; vertical-align: middle;
+  }
+  .error { color: #c0392b; }
+  .empty { color: #8889; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>YouTube Keyword Research</h1>
+
+<form id="search-form">
+  <input type="text" id="term" placeholder="e.g. youtube shorts editing" autocomplete="off" required>
+  <button type="submit" id="submit-btn">Research</button>
+</form>
+
+<div id="status"></div>
+<div id="results" hidden>
+  <h2 id="result-heading"></h2>
+  <p class="meta" id="result-meta"></p>
+
+  <section>
+    <h2>Competitiveness</h2>
+    <p><span class="score" id="score"></span> <span class="meta">/ 100 &mdash; higher means harder to break into right now</span></p>
+    <table id="videos-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Title</th><th>Channel</th>
+          <th class="num">Subscribers</th><th class="num">Views</th>
+          <th class="num">Age (days)</th><th class="num">Views/day</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Search volume</h2>
+    <p id="volume"></p>
+  </section>
+
+  <section>
+    <h2>Related terms</h2>
+    <div class="pills" id="related"></div>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <ul id="questions"></ul>
+  </section>
+
+  <section>
+    <h2>Hashtag recommendations</h2>
+    <div class="pills" id="hashtags"></div>
+  </section>
+</div>
+
+<script>
+const form = document.getElementById('search-form');
+const termInput = document.getElementById('term');
+const submitBtn = document.getElementById('submit-btn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '—');
+
+function pills(container, items) {
+  container.innerHTML = '';
+  if (!items || items.length === 0) {
+    container.innerHTML = '<span class="empty">none</span>';
+    return;
+  }
+  for (const item of items) {
+    const span = document.createElement('span');
+    span.textContent = item;
+    container.appendChild(span);
+  }
+}
+
+function render(data) {
+  const heading = document.getElementById('result-heading');
+  heading.innerHTML = '';
+  heading.append(data.seed_term);
+  if (data.cached) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = 'cached';
+    heading.appendChild(badge);
+  }
+
+  document.getElementById('result-meta').textContent = data.cached
+    ? `Served from cache (stored ${new Date(data.cached_at).toLocaleString()})`
+    : 'Fresh lookup';
+
+  document.getElementById('score').textContent = data.competitiveness.score;
+
+  const tbody = document.querySelector('#videos-table tbody');
+  tbody.innerHTML = '';
+  const vids = data.competitiveness.top_videos || [];
+  if (vids.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">no videos returned</td></tr>';
+  } else {
+    vids.forEach((v, i) => {
+      const tr = document.createElement('tr');
+      const cells = [
+        i + 1, v.title, v.channel,
+        fmt(v.subscriber_count), fmt(v.views),
+        fmt(v.video_age_days), fmt(v.view_velocity),
+      ];
+      cells.forEach((val, idx) => {
+        const td = document.createElement('td');
+        if (idx >= 3) td.className = 'num';
+        td.textContent = val;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  const vol = data.search_volume || {};
+  document.getElementById('volume').textContent = vol.value == null
+    ? `Not available yet (source: ${vol.source || 'unknown'})`
+    : `${fmt(vol.value)} (source: ${vol.source})`;
+
+  pills(document.getElementById('related'), data.related_terms);
+
+  const qList = document.getElementById('questions');
+  qList.innerHTML = '';
+  if (!data.questions || data.questions.length === 0) {
+    qList.innerHTML = '<li class="empty">none</li>';
+  } else {
+    for (const q of data.questions) {
+      const li = document.createElement('li');
+      li.textContent = q;
+      qList.appendChild(li);
+    }
+  }
+
+  pills(document.getElementById('hashtags'), data.hashtags);
+
+  resultsEl.hidden = false;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const term = termInput.value.trim();
+  if (!term) return;
+
+  submitBtn.disabled = true;
+  statusEl.textContent = 'Researching…';
+  statusEl.className = '';
+
+  try {
+    const res = await fetch('/api/keyword-research', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ term }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    statusEl.textContent = '';
+    render(data);
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.className = 'error';
+    resultsEl.hidden = true;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

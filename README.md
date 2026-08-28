@@ -50,10 +50,27 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
 
 **Note:** `findings.json`, `report.md`, `workbook.xlsx`, `deck.pptx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled. Downloaded thumbnails (`*.jpg`, including everything under `thumbnails/`) are gitignored too.
 
+### Keyword research tool
+
+Internal, personal-use tool (not customer-facing). Given a seed term it returns related terms, questions, a competitiveness score, hashtag recommendations, and a (stubbed) search-volume figure. Served by the same Express app in `index.js`:
+
+- `GET /keyword-research` — a single static page (`public/keyword-research.html`, no framework): an input box, a submit button, and a results table. No auth.
+- `POST /api/keyword-research` — body `{ "term": "youtube shorts editing" }`. Returns `seed_term`, `related_terms`, `questions`, `search_volume`, `competitiveness` (`score` plus a top-10 `top_videos` list), `hashtags`, and `cached` / `cached_at`.
+
+The pipeline lives in `keyword/`, one file per concern, orchestrated by `keyword/pipeline.js`:
+
+- `autocomplete.js` — hits YouTube's public suggest endpoint (`suggestqueries.google.com/complete/search?client=youtube`) for the seed term and for the seed prefixed with `how` / `what` / `why` / `best` / `vs`. Dedupes; anything starting with a question word goes to `questions`, the rest to `related_terms`. No API key, no quota cost.
+- `competitiveness.js` — `search.list` (100 units) for the seed term, then `videos.list` and one batched `channels.list` (~1 unit each) for view counts, publish dates, and subscriber counts. Computes `view_velocity` (views ÷ days since publish) per video and a rank-weighted, log-scaled 0–100 `score` across the top 10 (higher velocity = more competitive). Uses its own dedicated key, `YOUTUBE_API_KEY_KEYWORD_TOOL` — restrict it to YouTube Data API v3 only in the Cloud Console so this tool's quota stays isolated from `YOUTUBE_API_KEY`.
+- `hashtags.js` — ranks `snippet.tags` from the videos `competitiveness.js` already fetched by how many of the top 10 carry each tag, normalizes them to `#hashtags`, returns the top N (default 15). No extra API calls.
+- `volume.js` — stubbed: always returns `{ value: null, source: "google_ads" }`. Built to be swapped for a Keyword Planner `GenerateKeywordIdeas` call later without touching the other modules.
+- `cache.js` — before any YouTube call, `pipeline.js` checks `keyword_lookups` for a row for the normalized term (lowercased, trimmed, whitespace-collapsed) within the cache window (7 days, override with `KEYWORD_CACHE_WINDOW_DAYS`). A hit is returned with `cached: true` and skips all API calls; a miss runs the pipeline, writes the payload to `keyword_lookups`, and returns it with `cached: false`. This table doubles as search history.
+
+Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day before the ceiling — the cache keeps real usage well under that.
+
 ## Setup
 
 1. `npm install`, then `pip3 install -r reports/requirements.txt` (openpyxl, needed for `build_workbook.py`; `compute.py` and `build_report.py` are stdlib-only).
-2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`).
+2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`, `keyword_lookups.sql`).
 3. Create a `.env` file with:
    ```
    GOOGLE_CLIENT_ID=...
@@ -61,7 +78,9 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
    SUPABASE_URL=...
    SUPABASE_SERVICE_ROLE_KEY=...
    YOUTUBE_API_KEY=...  # for lookup_channel_id.js and fetch_recent_videos.js
+   YOUTUBE_API_KEY_KEYWORD_TOOL=...  # separate key, restricted to YouTube Data API v3, for the keyword research tool
    REDIRECT_URI=...  # optional; only needed outside local dev, e.g. https://<app>.up.railway.app/oauth2callback
+   KEYWORD_CACHE_WINDOW_DAYS=7  # optional; how long a cached keyword lookup stays fresh
    ```
 4. In the Google Cloud Console, add the callback URL as an Authorized redirect URI on that OAuth client — `http://localhost:3000/oauth2callback` for local dev, plus your Railway URL's `/oauth2callback` for deployment.
 
@@ -71,7 +90,9 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
 node index.js
 ```
 
-Then visit `http://localhost:3000/connect?client=<name>` (or whatever `PORT` you set) and approve access — `<name>` is the `client_name` the tokens get saved under in Supabase. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
+For the keyword research tool, visit `http://localhost:3000/keyword-research` and enter a seed term.
+
+For the audit pipeline, visit `http://localhost:3000/connect?client=<name>` (or whatever `PORT` you set) and approve access — `<name>` is the `client_name` the tokens get saved under in Supabase. You'll land back on `/oauth2callback`, which saves the tokens to Supabase and shows the channel title and subscriber count.
 
 Once tokens are stored, fetch analytics without re-authenticating (`<name>` is optional, defaulting to `'my channel'`; use whatever `client_name` you connected under):
 

@@ -1,6 +1,8 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const { getAuthUrl, handleOAuthCallback } = require('./auth.js');
+const { runKeywordResearch } = require('./keyword/pipeline.js');
 const {
   parseCompetitorInput,
   lookupChannelId,
@@ -16,6 +18,8 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 function escapeHtml(str) {
   return str
@@ -151,6 +155,27 @@ app.post('/competitors', async (req, res) => {
   </ul>
 </body>
 </html>`);
+});
+
+// Personal keyword-research tool: static page + its one JSON endpoint.
+app.get('/keyword-research', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'keyword-research.html'));
+});
+
+app.post('/api/keyword-research', async (req, res) => {
+  const { term } = req.body || {};
+  if (typeof term !== 'string' || !term.trim()) {
+    res.status(400).json({ error: 'Missing or empty "term" in request body.' });
+    return;
+  }
+
+  try {
+    const result = await runKeywordResearch(term.trim());
+    res.json(result);
+  } catch (err) {
+    console.error('Keyword research failed:', err);
+    res.status(500).json({ error: 'Keyword research failed — check server logs.' });
+  }
 });
 
 app.listen(PORT, () => {
