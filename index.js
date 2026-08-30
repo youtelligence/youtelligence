@@ -3,6 +3,7 @@ const path = require('path');
 const express = require('express');
 const { getAuthUrl, handleOAuthCallback } = require('./auth.js');
 const { runKeywordResearch } = require('./keyword/pipeline.js');
+const { findGaps } = require('./keyword/gaps.js');
 const {
   parseCompetitorInput,
   lookupChannelId,
@@ -175,6 +176,49 @@ app.post('/api/keyword-research', async (req, res) => {
   } catch (err) {
     console.error('Keyword research failed:', err);
     res.status(500).json({ error: 'Keyword research failed — check server logs.' });
+  }
+});
+
+// Gap analysis for an already-live video: same keyword landscape as above,
+// plus which landscape terms are missing from the pasted-in title/description
+// and tags. Returns structured gaps only -- no rewritten copy.
+app.post('/api/optimize-video', async (req, res) => {
+  const { topic, current_title, current_description, current_tags } = req.body || {};
+  if (typeof topic !== 'string' || !topic.trim()) {
+    res.status(400).json({ error: 'Missing or empty "topic" in request body.' });
+    return;
+  }
+
+  // Accept current_tags as an array or a comma-separated string.
+  const tags = Array.isArray(current_tags)
+    ? current_tags
+    : typeof current_tags === 'string'
+      ? current_tags.split(',')
+      : [];
+
+  try {
+    const landscape = await runKeywordResearch(topic.trim());
+    const gaps = findGaps(landscape, {
+      current_title: typeof current_title === 'string' ? current_title : '',
+      current_description: typeof current_description === 'string' ? current_description : '',
+      current_tags: tags,
+    });
+
+    res.json({
+      topic: topic.trim(),
+      keyword_landscape: {
+        related_terms: landscape.related_terms,
+        questions: landscape.questions,
+        competitiveness: landscape.competitiveness,
+        hashtags: landscape.hashtags,
+        search_volume: landscape.search_volume,
+      },
+      gaps,
+      cached: landscape.cached,
+    });
+  } catch (err) {
+    console.error('Video optimization failed:', err);
+    res.status(500).json({ error: 'Video optimization failed — check server logs.' });
   }
 });
 

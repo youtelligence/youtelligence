@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouTube Keyword Research</title>
+<title>YouTube Keyword Tools</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -11,10 +11,16 @@
     margin: 0; padding: 2rem; max-width: 960px; margin-inline: auto;
   }
   h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-  form { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
-  input[type="text"] { flex: 1; padding: .55rem .7rem; font-size: 1rem; }
+  .tool { margin-bottom: 1.5rem; }
+  form { display: flex; gap: .5rem; flex-wrap: wrap; }
+  form.stacked { flex-direction: column; align-items: stretch; }
+  input[type="text"], textarea {
+    flex: 1; padding: .55rem .7rem; font-size: 1rem; font-family: inherit;
+  }
+  textarea { resize: vertical; }
   button { padding: .55rem 1.1rem; font-size: 1rem; cursor: pointer; }
   button[disabled] { cursor: progress; opacity: .6; }
+  form.stacked button { align-self: flex-start; }
   section { margin: 1.5rem 0; }
   h2 { font-size: 1.05rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
   .pills span {
@@ -37,17 +43,44 @@
 </style>
 </head>
 <body>
-<h1>YouTube Keyword Research</h1>
+<h1>YouTube Keyword Tools</h1>
 
-<form id="search-form">
-  <input type="text" id="term" placeholder="e.g. youtube shorts editing" autocomplete="off" required>
-  <button type="submit" id="submit-btn">Research</button>
-</form>
+<div class="tool">
+  <h2>Keyword research</h2>
+  <form id="research-form">
+    <input type="text" id="term" placeholder="e.g. youtube shorts editing" autocomplete="off" required>
+    <button type="submit">Research</button>
+  </form>
+</div>
+
+<div class="tool">
+  <h2>Video optimization &mdash; gap analysis</h2>
+  <form id="optimize-form" class="stacked">
+    <input type="text" id="opt-topic" placeholder="Topic — e.g. strawberry rhubarb crumble recipe" autocomplete="off" required>
+    <input type="text" id="opt-title" placeholder="Current video title" autocomplete="off">
+    <textarea id="opt-description" rows="4" placeholder="Current video description"></textarea>
+    <input type="text" id="opt-tags" placeholder="Current tags, comma-separated" autocomplete="off">
+    <button type="submit">Find gaps</button>
+  </form>
+</div>
 
 <div id="status"></div>
+
 <div id="results" hidden>
   <h2 id="result-heading"></h2>
   <p class="meta" id="result-meta"></p>
+
+  <div id="gaps" hidden>
+    <section>
+      <h2>Missing from title or description</h2>
+      <div class="pills" id="gap-text"></div>
+    </section>
+    <section>
+      <h2>Missing from tags</h2>
+      <div class="pills" id="gap-tags"></div>
+    </section>
+    <p class="meta">Plain substring / normalized-tag matching — a term covered under different wording still shows here.</p>
+  </div>
 
   <section>
     <h2>Competitiveness</h2>
@@ -86,11 +119,11 @@
 </div>
 
 <script>
-const form = document.getElementById('search-form');
-const termInput = document.getElementById('term');
-const submitBtn = document.getElementById('submit-btn');
+const researchForm = document.getElementById('research-form');
+const optimizeForm = document.getElementById('optimize-form');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
+const gapsEl = document.getElementById('gaps');
 
 const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '—');
 // Cache freshness is a UTC calendar day, so show cached_at in UTC.
@@ -110,26 +143,30 @@ function pills(container, items) {
   }
 }
 
-function render(data) {
-  const heading = document.getElementById('result-heading');
-  heading.innerHTML = '';
-  heading.append(data.seed_term);
-  if (data.cached) {
+// Renders the keyword landscape shared by both tools. `landscape` has
+// related_terms / questions / competitiveness / hashtags / search_volume.
+function renderLandscape(landscape, { heading, cached, cachedAt }) {
+  const headingEl = document.getElementById('result-heading');
+  headingEl.innerHTML = '';
+  headingEl.append(heading);
+  if (cached) {
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = `cached · ${fmtUtcDate(data.cached_at)}`;
-    heading.appendChild(badge);
+    badge.textContent = cachedAt ? `cached · ${fmtUtcDate(cachedAt)}` : 'cached';
+    headingEl.appendChild(badge);
   }
 
-  document.getElementById('result-meta').textContent = data.cached
-    ? `Served from cache — stored ${fmtUtcDateTime(data.cached_at)}; cache resets at 00:00 UTC`
-    : 'Fresh lookup';
+  document.getElementById('result-meta').textContent = !cached
+    ? 'Fresh lookup'
+    : cachedAt
+      ? `Served from cache — stored ${fmtUtcDateTime(cachedAt)}; cache resets at 00:00 UTC`
+      : 'Served from cache; resets at 00:00 UTC';
 
-  document.getElementById('score').textContent = data.competitiveness.score;
+  document.getElementById('score').textContent = landscape.competitiveness.score;
 
   const tbody = document.querySelector('#videos-table tbody');
   tbody.innerHTML = '';
-  const vids = data.competitiveness.top_videos || [];
+  const vids = landscape.competitiveness.top_videos || [];
   if (vids.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty">no videos returned</td></tr>';
   } else {
@@ -150,56 +187,91 @@ function render(data) {
     });
   }
 
-  const vol = data.search_volume || {};
+  const vol = landscape.search_volume || {};
   document.getElementById('volume').textContent = vol.value == null
     ? `Not available yet (source: ${vol.source || 'unknown'})`
     : `${fmt(vol.value)} (source: ${vol.source})`;
 
-  pills(document.getElementById('related'), data.related_terms);
+  pills(document.getElementById('related'), landscape.related_terms);
 
   const qList = document.getElementById('questions');
   qList.innerHTML = '';
-  if (!data.questions || data.questions.length === 0) {
+  if (!landscape.questions || landscape.questions.length === 0) {
     qList.innerHTML = '<li class="empty">none</li>';
   } else {
-    for (const q of data.questions) {
+    for (const q of landscape.questions) {
       const li = document.createElement('li');
       li.textContent = q;
       qList.appendChild(li);
     }
   }
 
-  pills(document.getElementById('hashtags'), data.hashtags);
+  pills(document.getElementById('hashtags'), landscape.hashtags);
 
   resultsEl.hidden = false;
 }
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const term = termInput.value.trim();
-  if (!term) return;
+function renderGaps(gaps) {
+  pills(document.getElementById('gap-text'), gaps.missing_from_title_or_description);
+  pills(document.getElementById('gap-tags'), gaps.missing_from_tags);
+  gapsEl.hidden = false;
+}
 
-  submitBtn.disabled = true;
-  statusEl.textContent = 'Researching…';
+async function submitForm(form, work) {
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  statusEl.textContent = 'Working…';
   statusEl.className = '';
-
   try {
-    const res = await fetch('/api/keyword-research', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ term }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    await work();
     statusEl.textContent = '';
-    render(data);
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.className = 'error';
     resultsEl.hidden = true;
   } finally {
-    submitBtn.disabled = false;
+    btn.disabled = false;
   }
+}
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+researchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const term = document.getElementById('term').value.trim();
+  if (!term) return;
+  submitForm(researchForm, async () => {
+    const data = await postJson('/api/keyword-research', { term });
+    gapsEl.hidden = true;
+    renderLandscape(data, { heading: data.seed_term, cached: data.cached, cachedAt: data.cached_at });
+  });
+});
+
+optimizeForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const topic = document.getElementById('opt-topic').value.trim();
+  if (!topic) return;
+  const body = {
+    topic,
+    current_title: document.getElementById('opt-title').value,
+    current_description: document.getElementById('opt-description').value,
+    current_tags: document.getElementById('opt-tags').value
+      .split(',').map((t) => t.trim()).filter(Boolean),
+  };
+  submitForm(optimizeForm, async () => {
+    const data = await postJson('/api/optimize-video', body);
+    renderLandscape(data.keyword_landscape, { heading: data.topic, cached: data.cached, cachedAt: null });
+    renderGaps(data.gaps);
+  });
 });
 </script>
 </body>
