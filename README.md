@@ -62,10 +62,20 @@ The pipeline lives in `keyword/`, one file per concern, orchestrated by `keyword
 - `autocomplete.js` — hits YouTube's public suggest endpoint (`suggestqueries.google.com/complete/search?client=youtube`) for the seed term, for the seed prefixed with `how` / `what` / `why` / `best`, and for `<seed> vs` (`vs` trails so autocomplete fills in the competing term — "shorts editing vs capcut", not "vs shorts editing capcut"). Dedupes (dropping the seed and any bare query stem echoed back uncompleted); anything starting with a question word goes to `questions`, the rest to `related_terms`. No API key, no quota cost.
 - `competitiveness.js` — `search.list` (100 units) for the seed term, then `videos.list` and one batched `channels.list` (~1 unit each) for view counts, publish dates, and subscriber counts. Computes `view_velocity` (views ÷ days since publish) per video and a rank-weighted, log-scaled 0–100 `score` across the top 10 (higher velocity = more competitive). Uses its own dedicated key, `YOUTUBE_API_KEY_KEYWORD_TOOL` — restrict it to YouTube Data API v3 only in the Cloud Console so this tool's quota stays isolated from `YOUTUBE_API_KEY`.
 - `hashtags.js` — ranks `snippet.tags` from the videos `competitiveness.js` already fetched by how many of the top 10 carry each tag, normalizes them to `#hashtags`, returns the top N (default 15). Tags that just repeat the name of a channel in the result set (normalized: lowercase, no spaces/punctuation) are dropped before ranking, so a channel's own name doesn't get recommended as a hashtag on searches it dominates. No extra API calls.
-- `volume.js` — stubbed: always returns `{ value: null, source: "google_ads" }`. Built to be swapped for a Keyword Planner `GenerateKeywordIdeas` call later without touching the other modules.
+- `volume.js` — stubbed: always returns `{ value: null, source: "google_ads" }`. Wiring it to the Google Ads Keyword Planner is in progress — see **Search volume (Google Ads)** below. The stub keeps the same signature so it can be dropped in without touching the other modules.
 - `cache.js` — before any YouTube call, `pipeline.js` checks `keyword_lookups` for a row for the normalized term (lowercased, trimmed, whitespace-collapsed) whose `created_at` falls on the current UTC calendar date. The cache resets at 00:00 UTC each day rather than expiring a fixed span after it was written — a lookup at 23:58 UTC and the same term at 00:02 UTC are different days and both hit the live API. A hit is returned with `cached: true` and skips all API calls; a miss runs the pipeline, writes the payload to `keyword_lookups`, and returns it with `cached: false`. This table doubles as search history.
 
 Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day before the ceiling — the cache keeps real usage well under that.
+
+### Search volume (Google Ads)
+
+`volume.js` is meant to return real average-monthly-search figures from the Google Ads Keyword Planner (`KeywordPlanIdeaService.GenerateKeywordIdeas`). Groundwork so far:
+
+- A dedicated OAuth client (`GOOGLE_ADS_CLIENT_ID` / `GOOGLE_ADS_CLIENT_SECRET`), separate from the YouTube one — a refresh token is bound to the client that issued it, and the Ads integration authenticates with the `GOOGLE_ADS_*` client.
+- `get_google_ads_refresh_token.js` — one-time helper: runs the consent flow for the `adwords` scope against the Ads client and prints a `GOOGLE_ADS_REFRESH_TOKEN` line to paste into `.env`. Redirects to `http://localhost:3000/oauth2callback` (stop `node index.js` first so the port is free). Delete after use.
+- `test_google_ads_keyword_ideas.js` — standalone smoke test: authenticates with the `GOOGLE_ADS_*` credentials and calls `GenerateKeywordIdeas` (REST, `v25` — retired versions 404 with an HTML page; live set as of writing is v22–v25) for a single term, printing the raw response. Keeps credential/access problems separate from the eventual `volume.js` wiring.
+
+**Blocked on:** the developer token is at Test/Explorer access level, which returns `DEVELOPER_TOKEN_NOT_APPROVED` ("not allowed for use with explorer access") for `GenerateKeywordIdeas` against real data. Needs Basic access — apply in the Ads manager account under **Admin → API Center**. OAuth, the request shape, and the API version are all confirmed working; once the token is approved, `volume.js` is a straight port of the smoke test's call.
 
 ## Setup
 
@@ -80,6 +90,12 @@ Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day be
    YOUTUBE_API_KEY=...  # for lookup_channel_id.js and fetch_recent_videos.js
    YOUTUBE_API_KEY_KEYWORD_TOOL=...  # separate key, restricted to YouTube Data API v3, for the keyword research tool
    REDIRECT_URI=...  # optional; only needed outside local dev, e.g. https://<app>.up.railway.app/oauth2callback
+   # Google Ads Keyword Planner (for volume.js / the Google Ads scripts; not used by the running app yet):
+   GOOGLE_ADS_DEVELOPER_TOKEN=...       # Ads API Center; needs Basic access for real keyword data
+   GOOGLE_ADS_CLIENT_ID=...             # dedicated OAuth client, separate from GOOGLE_CLIENT_ID
+   GOOGLE_ADS_CLIENT_SECRET=...
+   GOOGLE_ADS_REFRESH_TOKEN=...         # produced by get_google_ads_refresh_token.js
+   GOOGLE_ADS_LOGIN_CUSTOMER_ID=...     # Ads manager account, digits only (no dashes)
    ```
 4. In the Google Cloud Console, add the callback URL as an Authorized redirect URI on that OAuth client — `http://localhost:3000/oauth2callback` for local dev, plus your Railway URL's `/oauth2callback` for deployment.
 
@@ -131,4 +147,11 @@ Test the thumbnail fetch/download for a single video on its own:
 
 ```
 node test_thumbnail.js <videoId>
+```
+
+Mint a Google Ads refresh token (one-time; stop `node index.js` first), then smoke-test the Keyword Planner credentials:
+
+```
+node get_google_ads_refresh_token.js
+node test_google_ads_keyword_ideas.js ["seed term"]
 ```
