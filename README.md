@@ -18,9 +18,11 @@
 
 `analytics.js` uses `getValidAccessToken` to call the YouTube Analytics API and prints average view duration over the last 28 days for the channel — no browser interaction needed once a refresh token is stored. Takes a client name as its first CLI argument, defaulting to `'my channel'` if omitted.
 
-`create_reporting_job.js` uses `getValidAccessToken` to call the YouTube Reporting API (`youtubereporting` v1) and create a recurring bulk report job for the `channel_reach_basic_a1` report type. Report files aren't available immediately — there's typically a delay of a day or more before the first one is generated. There isn't yet a script to list/download the generated report files. Takes a client name as its first CLI argument, defaulting to `'my channel'` if omitted.
+`create_reporting_job.js` uses `getValidAccessToken` to call the YouTube Reporting API (`youtubereporting` v1) and create a recurring bulk report job for the `channel_reach_basic_a1` report type. Report files aren't available immediately — there's typically a delay of a day or more before the first one is generated. Takes a client name as its first CLI argument, defaulting to `'my channel'` if omitted.
 
-The `reach_reports` Supabase table is provisioned (`supabase/reach_reports.sql`) to hold per-video daily impressions and click-through rate once that download script exists — one row per `(video_id, report_date)`, plus a `pulled_at` timestamp.
+`download_reports.js` is the other half: it finds every `channel_reach_basic_a1` job for the client (there can be more than one — `create_reporting_job.js` doesn't dedupe), lists their report files, and for each data day keeps only the report with the newest `createTime` (YouTube regenerates a day's file when it reprocesses data). It downloads each kept file over HTTP with the OAuth bearer token, parses the CSV, and aggregates the per-slice rows (`live_or_on_demand` × `subscribed_status` × …) back up to one row per `(video_id, report_date)` — summing `impressions` and taking an impressions-weighted mean of `impressions_click_through_rate`. Results are upserted into `reach_reports` on `(video_id, report_date)`, with `pulled_at` set explicitly so re-pulled days get a fresh timestamp. Takes a client name as its first CLI argument (default `'my channel'`) and an optional RFC 3339 `createdAfter` timestamp as its second, so a re-run only fetches report files generated since last time.
+
+The `reach_reports` Supabase table (`supabase/reach_reports.sql`) holds that output — one row per `(video_id, report_date)`, plus a `pulled_at` timestamp.
 
 ### Competitor tracking
 
@@ -42,7 +44,9 @@ The `competitor_channels` (client/channel pairs to track) and `competitor_snapsh
 The end-to-end pipeline that turns pulled data into a client deliverable. All six stages are built and working.
 
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
-2. **Assembly** — `assemble_findings.js` pulls the client channel (via the stored OAuth token for a client name given as its first CLI argument, defaulting to `'my channel'`) and groups `competitor_snapshots` by channel, writing both into `findings.json`.
+2. **Assembly** — `assemble_findings.js` pulls the client channel into `findings.json`. Two modes:
+   - **OAuth mode** (`node assemble_findings.js [name]`): reads the connected client's own channel via its stored token (client name defaults to `'my channel'`). Leaves `client_videos` untouched so the Analytics-backed fields other scripts add aren't clobbered. Competitors are resolved from `competitor_channels` **filtered to that client name** (`competitor_snapshots` has no `client_name` column, so the client's tracked channel IDs are looked up first, then only those channels' snapshots are grouped in).
+   - **Public-audit mode** (`node assemble_findings.js <channelName> <channelId>`): no OAuth. Pulls the given channel's recent videos through the same public Data API path competitors use, writes them to `client_videos` with `data_source: 'public_api'`, and leaves every Analytics-only field (`avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, `traffic_source_split`) `null`. **`competitors` is left empty** — a public audit analyzes one channel against its own video history (pairs within the library); named competitors only apply to OAuth clients, who submit them through the onboarding form.
 3. **Compute** — `reports/compute.py` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to `findings.json` if validation passes.
 4. **Report** — `reports/build_report.py` renders `findings.json` into a markdown audit report (`report.md`), matching the structure of `docs/example-report.md`.
 5. **Workbook** — `reports/build_workbook.py` exports `findings.json` into an Excel workbook (`workbook.xlsx`) with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
@@ -123,6 +127,12 @@ Create the `channel_reach_basic_a1` reporting job (only needs to be run once per
 node create_reporting_job.js <name>
 ```
 
+Once report files have been generated (a day or more later), download them into the `reach_reports` table. Safe to re-run — it upserts on `(video_id, report_date)`; pass an RFC 3339 timestamp as a second arg to only pull files generated since then:
+
+```
+node download_reports.js <name> [createdAfter]
+```
+
 Look up a competitor's channel ID from their handle:
 
 ```
@@ -135,10 +145,11 @@ Pull and save a snapshot of a channel's 10 most recent videos:
 node fetch_recent_videos.js <channelId>
 ```
 
-Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand (`assemble_findings.js` also takes an optional client name, defaulting to `'my channel'`):
+Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand:
 
 ```
-node assemble_findings.js <name>
+node assemble_findings.js <name>                       # OAuth: connected client's own channel + its competitors
+node assemble_findings.js "<channelName>" <channelId>  # public audit: single channel, no OAuth, no competitors
 python3 reports/compute.py
 python3 reports/build_report.py
 python3 reports/build_workbook.py
