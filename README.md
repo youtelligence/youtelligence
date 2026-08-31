@@ -40,22 +40,22 @@ This uses the YouTube Data API directly with an API key (`YOUTUBE_API_KEY`) — 
 
 The `competitor_channels` (client/channel pairs to track) and `competitor_snapshots` (per-video stat history) Supabase tables are provisioned in `supabase/`.
 
-### Audit pipeline (findings.json)
+### Audit pipeline
 
 The end-to-end pipeline that turns pulled data into a client deliverable. All six stages are built and working.
 
+Everything client-specific lives under `output/<slug>/`, where `<slug>` is the client name lowercased with non-alphanumeric runs collapsed to hyphens (`"JB Eckl"` → `output/jb-eckl/`). Each stage takes just the client name or slug as its argument (`"JB Eckl"` and `jb-eckl` both resolve to the same folder) and reads/writes `findings.json`, `report.md`, `workbook.xlsx`, or `deck.pptx` inside it. The whole `output/` tree is gitignored.
+
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
-2. **Assembly** — `assemble_findings.js` pulls the client channel into a per-client file, `findings-<slug>.json`, where `<slug>` is the name argument lowercased and hyphenated (`"JB Eckl"` → `findings-jb-eckl.json`, default `'my channel'` → `findings-my-channel.json`), so concurrent audits don't overwrite each other. It prints the exact downstream commands with that path. Two modes:
+2. **Assembly** — `assemble_findings.js` pulls the client channel into `output/<slug>/findings.json` (creating the folder if needed), so concurrent audits don't overwrite each other. It prints the exact downstream commands with the slug filled in. Two modes:
    - **OAuth mode** (`node assemble_findings.js [name]`): reads the connected client's own channel via its stored token (client name defaults to `'my channel'`). Leaves `client_videos` untouched so the Analytics-backed fields other scripts add aren't clobbered. Competitors are resolved from `competitor_channels` **filtered to that client name** (`competitor_snapshots` has no `client_name` column, so the client's tracked channel IDs are looked up first, then only those channels' snapshots are grouped in).
    - **Public-audit mode** (`node assemble_findings.js <channelName> <channelId> [monthsBack]`): no OAuth. Pulls the given channel's videos through the same public Data API path competitors use, writes them to `client_videos` with `data_source: 'public_api'`, and leaves every Analytics-only field (`avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, `traffic_source_split`) `null`. Without `monthsBack` it takes the 10 most recent uploads (`fetchRecentVideos`); with it (e.g. `... UCxxxx 6`) it pages the uploads playlist newest-first via `fetchVideosSince`, stopping at the first video older than the cutoff, so the audit covers the whole recent library. **`competitors` is left empty** — a public audit analyzes one channel against its own video history (pairs within the library); named competitors only apply to OAuth clients, who submit them through the onboarding form.
-3. **Compute** — `reports/compute.py [findings-<slug>.json]` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to that file if validation passes.
-4. **Report** — `reports/build_report.py [findings-<slug>.json] [report.md]` renders the findings into a markdown audit report, matching the structure of `docs/example-report.md`.
-5. **Workbook** — `reports/build_workbook.py [findings-<slug>.json] [workbook.xlsx]` exports the findings into an Excel workbook with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
-6. **Deck** — `assets/build_deck.js [findings-<slug>.json] [deck.pptx]` loops the findings' `pairs`, resolves each pair's `video_refs` to full video data, downloads each video's thumbnail (`test_thumbnail.js`'s resolution/download logic, cached under `thumbnails/`), and renders one slide per pair using `assets/slide_template.js`'s layout — real titles, stats, and thumbnails in place of the template's hardcoded example. The higher-`views_per_day` video in a pair gets the "higher performer" badge; the takeaway strip is the pair's own `notes`. Only handles pairs with exactly 2 `video_refs` — anything else is skipped with a warning, since the template is a two-column layout.
+3. **Compute** — `reports/compute.py <client>` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages in `output/<slug>/findings.json`, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back if validation passes.
+4. **Report** — `reports/build_report.py <client>` renders `output/<slug>/findings.json` into `output/<slug>/report.md`, matching the structure of `docs/example-report.md`.
+5. **Workbook** — `reports/build_workbook.py <client>` exports `output/<slug>/findings.json` into `output/<slug>/workbook.xlsx` with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
+6. **Deck** — `assets/build_deck.js <client>` reads `output/<slug>/findings.json` and renders `output/<slug>/deck.pptx`: a title slide (client name, subscribers, capture date, `headline_finding`), a video-overview table of all `client_videos` (split across slides if it doesn't fit), one slide per `pairs` entry, then list slides for `ruled_out`, `studio_asks`, and `recommendations` (each omitted if its array is empty). Pair slides resolve each `video_refs` to full video data and download each thumbnail (`test_thumbnail.js`'s resolution/download logic, cached under `thumbnails/`), rendering `assets/slide_template.js`'s two-column layout — real titles, stats, and 16:9 thumbnails in place of the template's hardcoded example; the higher-`views_per_day` video gets the "higher performer" badge and the takeaway strip is the pair's own `notes`. Pairs without exactly 2 `video_refs` are skipped with a warning. Colours come from an optional `findings.brand` object (`primary` / `primary_dark` / `accent` / `accent_deep`, hex), falling back to the green/gold palette.
 
-Each of stages 3–6 defaults its findings path to `findings.json` and its output to the fixed name (`report.md` / `workbook.xlsx` / `deck.pptx`); pass the per-client findings file (and, if running several clients, a per-client output path) explicitly.
-
-**Note:** `findings.json`, `findings-*.json`, `report.md`, `workbook.xlsx`, `deck.pptx`, and `docs/example-report.md` are all gitignored — they contain real client data, generated per run rather than being source-controlled. Downloaded thumbnails (`*.jpg`, including everything under `thumbnails/`) are gitignored too.
+**Note:** the entire `output/` directory is gitignored — it holds real per-client data, generated per run rather than source-controlled. `docs/example-report.md` and downloaded thumbnails (`*.jpg`, including everything under `thumbnails/`) are gitignored too.
 
 ### Keyword research tool
 
@@ -151,15 +151,15 @@ node fetch_recent_videos.js <channelId>
 Run the audit pipeline (in order) once `client_videos`/`competitors` data has been pulled and `pairs`/`headline_finding`/`ruled_out`/`recommendations` have been filled in by hand:
 
 ```
-# Assembly writes findings-<slug>.json and prints the commands below with that path filled in.
-node assemble_findings.js <name>                       # OAuth: connected client's own channel + its competitors
+# Assembly writes output/<slug>/findings.json and prints the commands below with the slug filled in.
+node assemble_findings.js "<name>"                      # OAuth: connected client's own channel + its competitors
 node assemble_findings.js "<channelName>" <channelId> [monthsBack]  # public audit: single channel, no OAuth, no competitors; monthsBack pulls full history for that window (default: 10 most recent)
 
-# Then, with <f> = the findings-<slug>.json that Assembly wrote:
-python3 reports/compute.py <f>
-python3 reports/build_report.py <f>
-python3 reports/build_workbook.py <f>
-node assets/build_deck.js <f>
+# Then, passing the same client name (or its slug) to each — e.g. "JB Eckl" or jb-eckl:
+python3 reports/compute.py "<name>"
+python3 reports/build_report.py "<name>"
+python3 reports/build_workbook.py "<name>"
+node assets/build_deck.js "<name>"
 ```
 
 Test the thumbnail fetch/download for a single video on its own:

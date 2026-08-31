@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Build an Excel workbook (Client / Competitors / Pairs sheets) from a
-findings file already processed by compute.py.
+client's findings file already processed by compute.py.
 
 This is a snapshot report, not an editable model: views_per_day,
 like_rate, and comment_rate are written as the plain values already
 computed in the findings file, not as Excel formulas.
 
-Usage: build_workbook.py [FINDINGS_PATH] [WORKBOOK_PATH]
-FINDINGS_PATH defaults to ../findings.json; pass a per-client file
-(e.g. ../findings-jb-eckl.json) to export that audit instead.
+Usage: build_workbook.py <client-name-or-slug>
+Reads output/<slug>/findings.json and writes output/<slug>/workbook.xlsx.
+Examples:
+  python3 reports/build_workbook.py "JB Eckl"   ->  output/jb-eckl/workbook.xlsx
+  python3 reports/build_workbook.py river        ->  output/river/workbook.xlsx
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -19,8 +22,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-DEFAULT_FINDINGS_PATH = Path(__file__).resolve().parent.parent / "findings.json"
-DEFAULT_WORKBOOK_PATH = Path(__file__).resolve().parent.parent / "workbook.xlsx"
+OUTPUT_ROOT = Path(__file__).resolve().parent.parent / "output"
+
+
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "client"
 
 FONT_NAME = "Arial"
 BODY_FONT = Font(name=FONT_NAME, size=11)
@@ -167,8 +173,16 @@ def build_pairs_sheet(wb, findings):
 
 
 def main():
-    findings_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FINDINGS_PATH
-    workbook_path = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_WORKBOOK_PATH
+    if len(sys.argv) < 2:
+        print("Usage: build_workbook.py <client-name-or-slug>", file=sys.stderr)
+        sys.exit(1)
+
+    base = OUTPUT_ROOT / slugify(sys.argv[1])
+    findings_path = base / "findings.json"
+    workbook_path = base / "workbook.xlsx"
+    if not findings_path.exists():
+        print(f"No findings file at {findings_path} — run assemble_findings.js then compute.py first.", file=sys.stderr)
+        sys.exit(1)
 
     findings = load_findings(findings_path)
 

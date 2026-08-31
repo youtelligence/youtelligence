@@ -44,13 +44,15 @@ const col1X = 0.5;
 const col2X = col1X + colW + colGap;
 
 const thumbW = 3.68;
-const thumbH = 2.60;
+const thumbH = (thumbW * 9) / 16; // real 16:9, not a fixed guess
 const thumbY = 1.10;
 
 const cardGap = 0.15;
 const cardW = (colW - cardGap * 2) / 3;
 const cardH = 0.72;
-const row1Y = 4.42;
+// Stat cards sit a fixed gap below the meta line, which itself sits below the
+// thumbnail — so everything downstream tracks thumbH rather than assuming it.
+const row1Y = thumbY + thumbH + 0.72;
 const row2Y = row1Y + cardH + 0.12;
 
 function buildColumn(colX, cfg) {
@@ -130,9 +132,9 @@ buildColumn(col2X, {
   ],
 });
 
-// divider between columns
+// divider between columns — thumbnail top to the bottom of the stat cards
 slide.addShape("rect", {
-  x: col1X + colW + colGap / 2 - 0.005, y: thumbY, w: 0.01, h: 4.86,
+  x: col1X + colW + colGap / 2 - 0.005, y: thumbY, w: 0.01, h: row2Y + cardH - thumbY,
   fill: { color: "E3E0D6" }, line: { type: "none" }
 });
 

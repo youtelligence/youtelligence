@@ -1,13 +1,6 @@
 .env
 .DS_Store
 node_modules
-findings.json
-findings-*.json
-report.md
-report-*.md
-workbook.xlsx
-workbook-*.xlsx
-deck.pptx
-deck-*.pptx
+output/
 docs/example-report.md
 *.jpg

@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Build a markdown audit report from a findings file already
+"""Build a markdown audit report from a client's findings file already
 processed by compute.py. Structure follows docs/example-report.md.
 
 headline_finding, ruled_out, and recommendations are judgment calls
 written by a person reviewing the data — this script reads them as-is
 rather than trying to derive them.
 
-Usage: build_report.py [FINDINGS_PATH] [REPORT_PATH]
-FINDINGS_PATH defaults to ../findings.json; pass a per-client file
-(e.g. ../findings-jb-eckl.json) to render that audit instead.
+Usage: build_report.py <client-name-or-slug>
+Reads output/<slug>/findings.json and writes output/<slug>/report.md.
+Examples:
+  python3 reports/build_report.py "JB Eckl"   ->  output/jb-eckl/report.md
+  python3 reports/build_report.py river        ->  output/river/report.md
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
-DEFAULT_FINDINGS_PATH = Path(__file__).resolve().parent.parent / "findings.json"
-DEFAULT_REPORT_PATH = Path(__file__).resolve().parent.parent / "report.md"
+OUTPUT_ROOT = Path(__file__).resolve().parent.parent / "output"
+
+
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "client"
 
 
 def load_findings(path):
@@ -178,8 +184,16 @@ def build_report(findings):
 
 
 def main():
-    findings_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FINDINGS_PATH
-    report_path = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_REPORT_PATH
+    if len(sys.argv) < 2:
+        print("Usage: build_report.py <client-name-or-slug>", file=sys.stderr)
+        sys.exit(1)
+
+    base = OUTPUT_ROOT / slugify(sys.argv[1])
+    findings_path = base / "findings.json"
+    report_path = base / "report.md"
+    if not findings_path.exists():
+        print(f"No findings file at {findings_path} — run assemble_findings.js then compute.py first.", file=sys.stderr)
+        sys.exit(1)
 
     findings = load_findings(findings_path)
     report = build_report(findings)

@@ -1,5 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
+const path = require('path');
 const { google } = require('googleapis');
 const { createClient } = require('@supabase/supabase-js');
 const { getValidAccessToken } = require('./auth.js');
@@ -26,13 +27,14 @@ const DEFAULT_CLIENT_NAME = 'my channel';
 //     With a monthsBack number (e.g. `... UCxxxx 6`) it pulls every upload
 //     from the last that many months; omit it for the 10-most-recent default.
 //
-// Output goes to a per-client file, findings-<slug>.json (e.g. "JB Eckl" ->
-// findings-jb-eckl.json), so audits for different clients don't overwrite
-// each other. The rest of the pipeline takes this path as its first argument:
-//   python3 reports/compute.py       findings-<slug>.json
-//   python3 reports/build_report.py  findings-<slug>.json
-//   python3 reports/build_workbook.py findings-<slug>.json
-//   node assets/build_deck.js        findings-<slug>.json
+// Output goes to output/<slug>/findings.json (e.g. "JB Eckl" ->
+// output/jb-eckl/findings.json), so audits for different clients don't
+// overwrite each other. The rest of the pipeline takes the client name or
+// slug as its only argument and reads/writes inside that same folder:
+//   python3 reports/compute.py       "<client>"
+//   python3 reports/build_report.py  "<client>"
+//   python3 reports/build_workbook.py "<client>"
+//   node assets/build_deck.js        "<client>"
 const clientName = process.argv[2] || DEFAULT_CLIENT_NAME;
 const publicChannelId = process.argv[3];
 // Public mode only: optional number of months of upload history to pull.
@@ -43,7 +45,8 @@ if (monthsBack !== null && (!Number.isFinite(monthsBack) || monthsBack <= 0)) {
   process.exit(1);
 }
 
-// Filesystem-safe slug of the client / channel name.
+// Filesystem-safe slug of the client / channel name (lowercase, non-alphanumeric
+// runs to hyphens). Accepts a name or an already-slugified string.
 function clientSlug(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return slug || 'client';
@@ -56,7 +59,8 @@ function monthsAgo(n) {
   return d;
 }
 
-const FINDINGS_PATH = `./findings-${clientSlug(clientName)}.json`;
+const OUTPUT_DIR = path.join(__dirname, 'output', clientSlug(clientName));
+const FINDINGS_PATH = path.join(OUTPUT_DIR, 'findings.json');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -257,6 +261,7 @@ async function main() {
     'TODO: fill in based on what metrics are actually missing for this client',
   ];
 
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.writeFileSync(FINDINGS_PATH, JSON.stringify(findings, null, 2) + '\n');
 
   const mode = publicChannelId ? 'public audit' : 'OAuth';
@@ -276,12 +281,13 @@ async function main() {
     );
   }
 
+  const slug = clientSlug(clientName);
   console.log(
     `\nNext, once pairs/headline_finding/ruled_out/recommendations are filled in:\n` +
-    `  python3 reports/compute.py ${FINDINGS_PATH}\n` +
-    `  python3 reports/build_report.py ${FINDINGS_PATH}\n` +
-    `  python3 reports/build_workbook.py ${FINDINGS_PATH}\n` +
-    `  node assets/build_deck.js ${FINDINGS_PATH}`
+    `  python3 reports/compute.py ${slug}\n` +
+    `  python3 reports/build_report.py ${slug}\n` +
+    `  python3 reports/build_workbook.py ${slug}\n` +
+    `  node assets/build_deck.js ${slug}`
   );
 }
 

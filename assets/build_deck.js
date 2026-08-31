@@ -1,6 +1,21 @@
-// Usage: node assets/build_deck.js [FINDINGS_PATH] [DECK_PATH]
-// FINDINGS_PATH defaults to ../findings.json; pass a per-client file
-// (e.g. ../findings-jb-eckl.json) to build that audit's deck instead.
+// Usage: node assets/build_deck.js <client-name-or-slug>
+// Reads output/<slug>/findings.json and writes output/<slug>/deck.pptx, where
+// <slug> is the client name lowercased with non-alphanumeric runs collapsed to
+// hyphens (an already-slugified name works too). E.g. "JB Eckl" and jb-eckl
+// both resolve to output/jb-eckl/.
+//
+// Slide order, all driven off findings.json:
+//   1. Title           client name, subscribers, capture date, headline_finding
+//   2. Video overview   every client_videos row in a table, split across slides
+//                       if it doesn't fit on one
+//   3. Pair slides      one per pairs[] entry (unchanged)
+//   4. Ruled out        ruled_out[] as a list (omitted if empty)
+//   5. Studio asks      studio_asks[] as a list (omitted if empty)
+//   6. Recommendations  recommendations[] as a numbered list (omitted if empty)
+//
+// Colors come from an optional findings.brand object ({ primary, primary_dark,
+// accent, accent_deep }, hex with or without '#'); anything missing falls back
+// to the green/gold palette below. Font is Arial throughout.
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -8,8 +23,18 @@ const https = require('https');
 const pptxgen = require('pptxgenjs');
 const { google } = require('googleapis');
 
-const FINDINGS_PATH = path.resolve(process.argv[2] || path.join(__dirname, '..', 'findings.json'));
-const DECK_PATH = path.resolve(process.argv[3] || path.join(__dirname, '..', 'deck.pptx'));
+function slugify(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'client';
+}
+
+if (!process.argv[2]) {
+  console.error('Usage: node assets/build_deck.js <client-name-or-slug>');
+  process.exit(1);
+}
+
+const OUTPUT_DIR = path.join(__dirname, '..', 'output', slugify(process.argv[2]));
+const FINDINGS_PATH = path.join(OUTPUT_DIR, 'findings.json');
+const DECK_PATH = path.join(OUTPUT_DIR, 'deck.pptx');
 const THUMBNAIL_DIR = path.join(__dirname, '..', 'thumbnails');
 
 const apiKey = process.env.YOUTUBE_API_KEY;
@@ -29,19 +54,36 @@ const CREAM_WARM = 'FBF6E7';
 const WHITE = 'FFFFFF';
 const GRAY = '5F5E5A';
 
+// Resolves the deck palette: findings.brand overrides, green/gold fallback.
+function resolveBrand(findings) {
+  const b = (findings && findings.brand) || {};
+  const hex = (value, fallback) =>
+    typeof value === 'string' && /^#?[0-9a-fA-F]{6}$/.test(value.trim())
+      ? value.trim().replace(/^#/, '').toUpperCase()
+      : fallback;
+  return {
+    primary: hex(b.primary, GREEN),
+    primaryDark: hex(b.primary_dark, GREEN_DARK),
+    accent: hex(b.accent, GOLD_BRIGHT),
+    accentDeep: hex(b.accent_deep, GOLD),
+  };
+}
+
 const colW = 6.0;
 const colGap = 0.33;
 const col1X = 0.5;
 const col2X = col1X + colW + colGap;
 
 const thumbW = 3.68;
-const thumbH = 2.6;
+const thumbH = (thumbW * 9) / 16; // real 16:9, not a fixed guess
 const thumbY = 1.1;
 
 const cardGap = 0.15;
 const cardW = (colW - cardGap * 2) / 3;
 const cardH = 0.72;
-const row1Y = 4.42;
+// Stat cards sit a fixed gap below the meta line, which itself sits below the
+// thumbnail — so everything downstream tracks thumbH rather than assuming it.
+const row1Y = thumbY + thumbH + 0.72;
 const row2Y = row1Y + cardH + 0.12;
 
 // Same column layout as slide_template.js's buildColumn(), parameterized
@@ -98,6 +140,17 @@ function fmtInt(n) {
 
 function fmtPct(n) {
   return n == null ? 'N/A' : `${n}%`;
+}
+
+// runtime_seconds -> "M:SS" (or "H:MM:SS" past an hour), "N/A" if missing.
+function fmtDuration(seconds) {
+  if (seconds == null || !Number.isFinite(seconds)) return 'N/A';
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return `${h ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
 }
 
 function truncate(text, width) {
@@ -170,13 +223,13 @@ async function buildPairSlide(pres, pair, lookup) {
   const refs = pair.video_refs || [];
   if (refs.length !== 2) {
     console.warn(`Skipping pair "${pair.label}": expected 2 video_refs, got ${refs.length}.`);
-    return;
+    return 0;
   }
 
   const videos = refs.map((id) => lookup.get(id));
   if (videos.some((v) => !v)) {
     console.warn(`Skipping pair "${pair.label}": one or more video_refs not found in ${FINDINGS_PATH}.`);
-    return;
+    return 0;
   }
 
   const [imgA, imgB] = await Promise.all(videos.map((v) => ensureThumbnail(v.video_id)));
@@ -227,9 +280,9 @@ async function buildPairSlide(pres, pair, lookup) {
     stats: videoStats(loser.video),
   });
 
-  // Divider between columns.
+  // Divider between columns — spans thumbnail top to the bottom of the stat cards.
   slide.addShape('rect', {
-    x: col1X + colW + colGap / 2 - 0.005, y: thumbY, w: 0.01, h: 4.86,
+    x: col1X + colW + colGap / 2 - 0.005, y: thumbY, w: 0.01, h: row2Y + cardH - thumbY,
     fill: { color: 'E3E0D6' }, line: { type: 'none' },
   });
 
@@ -241,29 +294,169 @@ async function buildPairSlide(pres, pair, lookup) {
     x: 0.75, y: noteY + 0.06, w: 11.83, h: 0.6,
     fontFace: 'Arial', fontSize: 11.5, color: WHITE, italic: true, valign: 'middle', margin: 0,
   });
+
+  return 1;
+}
+
+// --- Slide types added around the pair slides, all read straight from findings ---
+
+// Header bar + title, shared by the overview and list slides.
+function addHeader(slide, brand, title) {
+  slide.background = { color: WHITE };
+  slide.addShape('rect', { x: 0, y: 0, w: 13.33, h: 0.95, fill: { color: brand.primary }, line: { type: 'none' } });
+  slide.addText(title, {
+    x: 0.5, y: 0.12, w: 12.3, h: 0.6,
+    fontFace: 'Arial', fontSize: 22, bold: true, color: WHITE, valign: 'middle', margin: 0,
+  });
+}
+
+// Slide 1: client identity + the headline finding.
+function buildTitleSlide(pres, brand, findings) {
+  const client = findings.client || {};
+  const slide = pres.addSlide();
+  slide.background = { color: brand.primary };
+
+  slide.addText(client.name || 'Channel audit', {
+    x: 0.6, y: 0.7, w: 12.1, h: 1.5,
+    fontFace: 'Arial', fontSize: 36, bold: true, color: WHITE, valign: 'top', margin: 0,
+  });
+  slide.addShape('rect', { x: 0.62, y: 2.35, w: 3.0, h: 0.06, fill: { color: brand.accent }, line: { type: 'none' } });
+
+  const meta = [
+    client.subscribers != null ? `${fmtInt(client.subscribers)} subscribers` : null,
+    client.capture_date ? `Captured ${client.capture_date}` : null,
+  ].filter(Boolean).join('   •   ');
+  if (meta) {
+    slide.addText(meta, {
+      x: 0.6, y: 2.6, w: 12.1, h: 0.4, fontFace: 'Arial', fontSize: 15, color: brand.accent, margin: 0,
+    });
+  }
+
+  if (findings.headline_finding) {
+    slide.addText('HEADLINE FINDING', {
+      x: 0.6, y: 3.5, w: 12.1, h: 0.35, fontFace: 'Arial', fontSize: 12, bold: true, color: brand.accent, margin: 0,
+    });
+    slide.addText(findings.headline_finding, {
+      x: 0.6, y: 3.95, w: 12.1, h: 3.1,
+      fontFace: 'Arial', fontSize: 20, color: WHITE, valign: 'top', margin: 0, lineSpacingMultiple: 1.15,
+    });
+  }
+  return 1;
+}
+
+// Slide 2 (or more): every client_videos row in a table, paginated so text
+// never has to shrink to fit.
+const OVERVIEW_ROWS_PER_SLIDE = 13;
+
+function buildOverviewSlides(pres, brand, findings) {
+  const videos = findings.client_videos || [];
+  if (videos.length === 0) return 0;
+
+  const chunks = [];
+  for (let i = 0; i < videos.length; i += OVERVIEW_ROWS_PER_SLIDE) {
+    chunks.push(videos.slice(i, i + OVERVIEW_ROWS_PER_SLIDE));
+  }
+
+  const headerLabels = ['Title', 'Views', 'Views/day', 'Like rate', 'Comment rate', 'Runtime'];
+  const headerRow = headerLabels.map((text, i) => ({
+    text,
+    options: {
+      bold: true, color: WHITE, fill: { color: brand.primary }, fontFace: 'Arial',
+      fontSize: 10, align: i === 0 ? 'left' : 'right', valign: 'middle',
+    },
+  }));
+
+  chunks.forEach((chunk, idx) => {
+    const slide = pres.addSlide();
+    addHeader(slide, brand, chunks.length > 1 ? `Video overview  (${idx + 1}/${chunks.length})` : 'Video overview');
+
+    const rows = chunk.map((v, i) => {
+      const fill = { color: i % 2 ? WHITE : CREAM };
+      const num = (text) => ({
+        text,
+        options: { fontFace: 'Arial', fontSize: 9.5, color: GRAY, align: 'right', valign: 'middle', fill },
+      });
+      return [
+        {
+          text: truncate(v.title || '', 62),
+          options: { fontFace: 'Arial', fontSize: 9.5, color: brand.primaryDark, align: 'left', valign: 'middle', fill },
+        },
+        num(fmtInt(v.views)),
+        num(v.views_per_day != null ? String(v.views_per_day) : 'N/A'),
+        num(fmtPct(v.like_rate)),
+        num(fmtPct(v.comment_rate)),
+        num(fmtDuration(v.runtime_seconds)),
+      ];
+    });
+
+    slide.addTable([headerRow, ...rows], {
+      x: 0.5, y: 1.2, w: 12.33,
+      colW: [5.6, 1.35, 1.35, 1.35, 1.5, 1.18],
+      rowH: 0.4,
+      border: { type: 'solid', color: 'E3E0D6', pt: 1 },
+      fontFace: 'Arial', fontSize: 9.5, valign: 'middle',
+    });
+  });
+
+  return chunks.length;
+}
+
+// Slides 4-6: a titled bullet (or numbered) list. Returns 0 — no slide — when
+// the source array is empty.
+function buildListSlide(pres, brand, title, items, { numbered = false } = {}) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+
+  const slide = pres.addSlide();
+  addHeader(slide, brand, title);
+
+  const body = items.map((item) => ({
+    text: String(item),
+    options: {
+      bullet: numbered ? { type: 'number' } : true,
+      fontFace: 'Arial', fontSize: 14, color: brand.primaryDark, paraSpaceAfter: 12,
+    },
+  }));
+  slide.addText(body, {
+    x: 0.7, y: 1.35, w: 12.0, h: 5.8, valign: 'top', margin: 0, lineSpacingMultiple: 1.15,
+  });
+  return 1;
 }
 
 async function main() {
-  const findings = JSON.parse(fs.readFileSync(FINDINGS_PATH, 'utf8'));
-  const pairs = findings.pairs || [];
-  if (pairs.length === 0) {
-    console.error(`No pairs in ${FINDINGS_PATH} — nothing to build.`);
+  if (!fs.existsSync(FINDINGS_PATH)) {
+    console.error(`No findings file at ${FINDINGS_PATH} — run assemble_findings.js then compute.py first.`);
     process.exit(1);
   }
+  const findings = JSON.parse(fs.readFileSync(FINDINGS_PATH, 'utf8'));
+  const pairs = findings.pairs || [];
 
   fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
 
   const pres = new pptxgen();
   pres.layout = 'LAYOUT_WIDE';
 
+  const brand = resolveBrand(findings);
   const lookup = buildVideoLookup(findings);
 
+  let slides = 0;
+  slides += buildTitleSlide(pres, brand, findings);
+  slides += buildOverviewSlides(pres, brand, findings);
+
   for (const pair of pairs) {
-    await buildPairSlide(pres, pair, lookup);
+    slides += await buildPairSlide(pres, pair, lookup);
+  }
+
+  slides += buildListSlide(pres, brand, 'What we ruled out', findings.ruled_out);
+  slides += buildListSlide(pres, brand, "What public data can't tell us", findings.studio_asks);
+  slides += buildListSlide(pres, brand, 'Recommendations', findings.recommendations, { numbered: true });
+
+  if (slides === 0) {
+    console.error(`Nothing to render from ${FINDINGS_PATH} — no client, videos, pairs, or lists.`);
+    process.exit(1);
   }
 
   await pres.writeFile({ fileName: DECK_PATH });
-  console.log(`Wrote deck to ${DECK_PATH}.`);
+  console.log(`Wrote deck to ${DECK_PATH} (${slides} slide${slides === 1 ? '' : 's'}).`);
 }
 
 main().catch((err) => {

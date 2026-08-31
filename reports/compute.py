@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Recompute normalized metrics in a findings file and print a summary table.
+"""Recompute normalized metrics in a client's findings file and print a summary.
 
-Usage: compute.py [FINDINGS_PATH]
-FINDINGS_PATH defaults to ../findings.json; pass a per-client file
-(e.g. ../findings-jb-eckl.json) to work on that audit instead.
+Usage: compute.py <client-name-or-slug>
+Reads and rewrites output/<slug>/findings.json, where <slug> is the client
+name lowercased with non-alphanumeric runs collapsed to hyphens (an
+already-slugified name works too). Examples:
+  python3 reports/compute.py "JB Eckl"   ->  output/jb-eckl/findings.json
+  python3 reports/compute.py river        ->  output/river/findings.json
 """
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_FINDINGS_PATH = Path(__file__).resolve().parent.parent / "findings.json"
+OUTPUT_ROOT = Path(__file__).resolve().parent.parent / "output"
 TITLE_WIDTH = 40
+
+
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "client"
+
+
+def findings_path_for(name):
+    return OUTPUT_ROOT / slugify(name) / "findings.json"
 
 
 def load_findings(path):
@@ -123,7 +135,15 @@ def print_table(headers, rows):
 
 
 def main():
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FINDINGS_PATH
+    if len(sys.argv) < 2:
+        print("Usage: compute.py <client-name-or-slug>", file=sys.stderr)
+        sys.exit(1)
+
+    path = findings_path_for(sys.argv[1])
+    if not path.exists():
+        print(f"No findings file at {path} — run assemble_findings.js first.", file=sys.stderr)
+        sys.exit(1)
+
     findings = load_findings(path)
 
     rows = []
