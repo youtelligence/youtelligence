@@ -2,6 +2,7 @@
 .DS_Store
 node_modules
 findings.json
+findings-*.json
 report.md
 workbook.xlsx
 deck.pptx

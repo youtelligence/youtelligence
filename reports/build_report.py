@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Build a markdown audit report from a findings.json file already
+"""Build a markdown audit report from a findings file already
 processed by compute.py. Structure follows docs/example-report.md.
 
 headline_finding, ruled_out, and recommendations are judgment calls
 written by a person reviewing the data — this script reads them as-is
 rather than trying to derive them.
+
+Usage: build_report.py [FINDINGS_PATH] [REPORT_PATH]
+FINDINGS_PATH defaults to ../findings.json; pass a per-client file
+(e.g. ../findings-jb-eckl.json) to render that audit instead.
 """
 
 import json

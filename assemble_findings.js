@@ -6,7 +6,6 @@ const { getValidAccessToken } = require('./auth.js');
 const { fetchRecentVideos } = require('./competitors.js');
 
 const DEFAULT_CLIENT_NAME = 'my channel';
-const FINDINGS_PATH = './findings.json';
 
 // Two modes, picked by whether a channel ID is passed as the second argument:
 //
@@ -24,8 +23,24 @@ const FINDINGS_PATH = './findings.json';
 //     Analytics-only field (avg_view_duration_seconds, avg_percentage_viewed,
 //     impressions, ctr, traffic_source_split) null. A public audit analyses
 //     one channel against its own video history, so competitors is left empty.
+//
+// Output goes to a per-client file, findings-<slug>.json (e.g. "JB Eckl" ->
+// findings-jb-eckl.json), so audits for different clients don't overwrite
+// each other. The rest of the pipeline takes this path as its first argument:
+//   python3 reports/compute.py       findings-<slug>.json
+//   python3 reports/build_report.py  findings-<slug>.json
+//   python3 reports/build_workbook.py findings-<slug>.json
+//   node assets/build_deck.js        findings-<slug>.json
 const clientName = process.argv[2] || DEFAULT_CLIENT_NAME;
 const publicChannelId = process.argv[3];
+
+// Filesystem-safe slug of the client / channel name.
+function clientSlug(name) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || 'client';
+}
+
+const FINDINGS_PATH = `./findings-${clientSlug(clientName)}.json`;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -238,6 +253,14 @@ async function main() {
       `(from competitor_channels for "${clientName}").`
     );
   }
+
+  console.log(
+    `\nNext, once pairs/headline_finding/ruled_out/recommendations are filled in:\n` +
+    `  python3 reports/compute.py ${FINDINGS_PATH}\n` +
+    `  python3 reports/build_report.py ${FINDINGS_PATH}\n` +
+    `  python3 reports/build_workbook.py ${FINDINGS_PATH}\n` +
+    `  node assets/build_deck.js ${FINDINGS_PATH}`
+  );
 }
 
 main().catch((err) => {

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Recompute normalized metrics in findings.json and print a summary table."""
+"""Recompute normalized metrics in a findings file and print a summary table.
+
+Usage: compute.py [FINDINGS_PATH]
+FINDINGS_PATH defaults to ../findings.json; pass a per-client file
+(e.g. ../findings-jb-eckl.json) to work on that audit instead.
+"""
 
 import json
 import sys

@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Build an Excel workbook (Client / Competitors / Pairs sheets) from a
-findings.json file already processed by compute.py.
+findings file already processed by compute.py.
 
 This is a snapshot report, not an editable model: views_per_day,
 like_rate, and comment_rate are written as the plain values already
-computed in findings.json, not as Excel formulas.
+computed in the findings file, not as Excel formulas.
+
+Usage: build_workbook.py [FINDINGS_PATH] [WORKBOOK_PATH]
+FINDINGS_PATH defaults to ../findings.json; pass a per-client file
+(e.g. ../findings-jb-eckl.json) to export that audit instead.
 """
 
 import json

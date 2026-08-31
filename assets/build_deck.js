@@ -1,3 +1,6 @@
+// Usage: node assets/build_deck.js [FINDINGS_PATH] [DECK_PATH]
+// FINDINGS_PATH defaults to ../findings.json; pass a per-client file
+// (e.g. ../findings-jb-eckl.json) to build that audit's deck instead.
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -172,7 +175,7 @@ async function buildPairSlide(pres, pair, lookup) {
 
   const videos = refs.map((id) => lookup.get(id));
   if (videos.some((v) => !v)) {
-    console.warn(`Skipping pair "${pair.label}": one or more video_refs not found in findings.json.`);
+    console.warn(`Skipping pair "${pair.label}": one or more video_refs not found in ${FINDINGS_PATH}.`);
     return;
   }
 
@@ -244,7 +247,7 @@ async function main() {
   const findings = JSON.parse(fs.readFileSync(FINDINGS_PATH, 'utf8'));
   const pairs = findings.pairs || [];
   if (pairs.length === 0) {
-    console.error('No pairs in findings.json — nothing to build.');
+    console.error(`No pairs in ${FINDINGS_PATH} — nothing to build.`);
     process.exit(1);
   }
 
