@@ -22,6 +22,7 @@ Array of objects — one per client video pulled for the audit.
 | `video_id` | string | |
 | `title` | string | |
 | `published_at` | string | |
+| `runtime_seconds` | number \| null | Video length in seconds, parsed from the Data API's ISO 8601 `contentDetails.duration` (e.g. `PT10M33S` → `633`). `null` if the duration was missing or unparseable. Available from public data, so present for competitors too. |
 | `views` | number | |
 | `likes` | number | |
 | `comments` | number | |
@@ -55,7 +56,7 @@ Present only when traffic source data is available (`data_source: 'analytics_api
 
 `data_source` records which API produced a given `client_videos` row, since the audit blends two sources with different capabilities:
 
-- `'public_api'` — YouTube Data API (public, no OAuth). Only the base stats (`views`, `likes`, `comments`, and the metrics derived from them) are available; the Analytics-only fields above are `null`.
+- `'public_api'` — YouTube Data API (public, no OAuth). Only the base stats (`views`, `likes`, `comments`, `runtime_seconds`, and the metrics derived from them) are available; the Analytics-only fields above are `null`.
 - `'analytics_api'` — YouTube Analytics API (OAuth, client-authorized). Adds `avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, and `traffic_source_split`.
 
 ## `competitors`
@@ -66,7 +67,7 @@ Array of objects — one per tracked competitor channel.
 |---|---|---|
 | `channel_name` | string | |
 | `channel_id` | string | |
-| `videos` | array | Same shape as `client_videos`, **except** it never includes `avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, or `traffic_source_split` — competitor channels are public-data only, since there's no OAuth access to a competitor's own Analytics. `data_source` on these rows is always `'public_api'`. |
+| `videos` | array | Same shape as `client_videos` (including `runtime_seconds`), **except** it never includes `avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, or `traffic_source_split` — competitor channels are public-data only, since there's no OAuth access to a competitor's own Analytics. `data_source` on these rows is always `'public_api'`. |
 
 ## `pairs`
 
@@ -111,6 +112,7 @@ Array of strings. Metrics the audit would want but that aren't obtainable even w
       "video_id": "lJKF6AByM7g",
       "title": "Get some blues vibe into your pentatonics QUICKLY",
       "published_at": "2026-07-22T19:31:18Z",
+      "runtime_seconds": 633,
       "views": 226,
       "likes": 10,
       "comments": 5,
@@ -142,6 +144,7 @@ Array of strings. Metrics the audit would want but that aren't obtainable even w
           "video_id": "abc123",
           "title": "Blues Licks Every Guitarist Should Know",
           "published_at": "2026-07-20T15:00:00Z",
+          "runtime_seconds": 741,
           "views": 15200,
           "likes": 890,
           "comments": 120,

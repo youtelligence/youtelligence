@@ -31,7 +31,8 @@ This uses the YouTube Data API directly with an API key (`YOUTUBE_API_KEY`) — 
 `competitors.js` holds the underlying lookup/fetch/save logic as reusable functions:
 
 - `lookupChannelId(handle)` resolves a `@handle` to its channel ID and title via `channels.list({ forHandle })`.
-- `fetchRecentVideos(channelId)` pulls a channel's 10 most recent uploads (via the channel's uploads playlist) and returns each one's title, views, likes, comments, published date, plus normalized metrics — views/day (one decimal, matching the audit report format), like rate, and comment rate (both as percents). `channel_name` is read from the channel's own title, not hardcoded.
+- `fetchRecentVideos(channelId)` pulls a channel's 10 most recent uploads (via the channel's uploads playlist) and returns each one's title, views, likes, comments, published date, `runtime_seconds` (parsed from the Data API's ISO 8601 `contentDetails.duration`), plus normalized metrics — views/day (one decimal, matching the audit report format), like rate, and comment rate (both as percents). `channel_name` is read from the channel's own title, not hardcoded.
+- `fetchVideosSince(channelId, sinceDate)` is the history-window variant: it pages the uploads playlist newest-first (50 per page, following `pageToken`) and stops at the first upload published before `sinceDate`, returning the same fields as `fetchRecentVideos` (including `runtime_seconds`). Used by `assemble_findings.js`'s public-audit mode; competitor tracking still uses the 10-video `fetchRecentVideos`.
 - `saveSnapshots(snapshots)` inserts rows into the `competitor_snapshots` Supabase table.
 - `saveCompetitorChannel(clientName, channelId, channelName)` upserts a client/channel pair into the `competitor_channels` Supabase table, keyed on `(client_name, channel_id)`.
 
@@ -46,7 +47,7 @@ The end-to-end pipeline that turns pulled data into a client deliverable. All si
 1. **Schema** — `docs/findings-schema.md` defines `findings.json`'s structure: `client`, `client_videos`, `competitors`, `pairs`, `studio_asks`, and the judgment-call fields (`headline_finding`, `ruled_out`, `recommendations`) that a person writes in rather than the pipeline deriving.
 2. **Assembly** — `assemble_findings.js` pulls the client channel into a per-client file, `findings-<slug>.json`, where `<slug>` is the name argument lowercased and hyphenated (`"JB Eckl"` → `findings-jb-eckl.json`, default `'my channel'` → `findings-my-channel.json`), so concurrent audits don't overwrite each other. It prints the exact downstream commands with that path. Two modes:
    - **OAuth mode** (`node assemble_findings.js [name]`): reads the connected client's own channel via its stored token (client name defaults to `'my channel'`). Leaves `client_videos` untouched so the Analytics-backed fields other scripts add aren't clobbered. Competitors are resolved from `competitor_channels` **filtered to that client name** (`competitor_snapshots` has no `client_name` column, so the client's tracked channel IDs are looked up first, then only those channels' snapshots are grouped in).
-   - **Public-audit mode** (`node assemble_findings.js <channelName> <channelId>`): no OAuth. Pulls the given channel's recent videos through the same public Data API path competitors use, writes them to `client_videos` with `data_source: 'public_api'`, and leaves every Analytics-only field (`avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, `traffic_source_split`) `null`. **`competitors` is left empty** — a public audit analyzes one channel against its own video history (pairs within the library); named competitors only apply to OAuth clients, who submit them through the onboarding form.
+   - **Public-audit mode** (`node assemble_findings.js <channelName> <channelId> [monthsBack]`): no OAuth. Pulls the given channel's videos through the same public Data API path competitors use, writes them to `client_videos` with `data_source: 'public_api'`, and leaves every Analytics-only field (`avg_view_duration_seconds`, `avg_percentage_viewed`, `impressions`, `ctr`, `traffic_source_split`) `null`. Without `monthsBack` it takes the 10 most recent uploads (`fetchRecentVideos`); with it (e.g. `... UCxxxx 6`) it pages the uploads playlist newest-first via `fetchVideosSince`, stopping at the first video older than the cutoff, so the audit covers the whole recent library. **`competitors` is left empty** — a public audit analyzes one channel against its own video history (pairs within the library); named competitors only apply to OAuth clients, who submit them through the onboarding form.
 3. **Compute** — `reports/compute.py [findings-<slug>.json]` recalculates `views_per_day`/`like_rate`/`comment_rate` and `traffic_source_split` percentages, validates the results (including that pairs reference real videos and use a valid `diagnosis`), and only saves back to that file if validation passes.
 4. **Report** — `reports/build_report.py [findings-<slug>.json] [report.md]` renders the findings into a markdown audit report, matching the structure of `docs/example-report.md`.
 5. **Workbook** — `reports/build_workbook.py [findings-<slug>.json] [workbook.xlsx]` exports the findings into an Excel workbook with Client/Competitors/Pairs sheets, values written as a static snapshot rather than live formulas.
@@ -88,7 +89,7 @@ Default YouTube Data API quota is 10,000 units/day, so ~100 fresh lookups/day be
 ## Setup
 
 1. `npm install`, then `pip3 install -r reports/requirements.txt` (openpyxl, needed for `build_workbook.py`; `compute.py` and `build_report.py` are stdlib-only).
-2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`, `keyword_lookups.sql`).
+2. Create a Supabase project, then run the SQL migrations in `supabase/` (in order: `oauth_tokens.sql`, `oauth_tokens_unique_client.sql`, `oauth_tokens_add_expires_at.sql`, `grant_oauth_tokens.sql`, `reach_reports.sql`, `competitor_channels.sql`, `competitor_snapshots.sql`, `competitor_snapshots_add_normalized.sql`, `competitor_snapshots_add_runtime.sql`, `keyword_lookups.sql`).
 3. Create a `.env` file with:
    ```
    GOOGLE_CLIENT_ID=...
@@ -152,7 +153,7 @@ Run the audit pipeline (in order) once `client_videos`/`competitors` data has be
 ```
 # Assembly writes findings-<slug>.json and prints the commands below with that path filled in.
 node assemble_findings.js <name>                       # OAuth: connected client's own channel + its competitors
-node assemble_findings.js "<channelName>" <channelId>  # public audit: single channel, no OAuth, no competitors
+node assemble_findings.js "<channelName>" <channelId> [monthsBack]  # public audit: single channel, no OAuth, no competitors; monthsBack pulls full history for that window (default: 10 most recent)
 
 # Then, with <f> = the findings-<slug>.json that Assembly wrote:
 python3 reports/compute.py <f>

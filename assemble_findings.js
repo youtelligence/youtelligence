@@ -3,7 +3,7 @@ const fs = require('fs');
 const { google } = require('googleapis');
 const { createClient } = require('@supabase/supabase-js');
 const { getValidAccessToken } = require('./auth.js');
-const { fetchRecentVideos } = require('./competitors.js');
+const { fetchRecentVideos, fetchVideosSince } = require('./competitors.js');
 
 const DEFAULT_CLIENT_NAME = 'my channel';
 
@@ -16,13 +16,15 @@ const DEFAULT_CLIENT_NAME = 'my channel';
 //     filtered to this client name (competitors are submitted through the
 //     onboarding form, so only OAuth clients have them).
 //
-//   node assemble_findings.js <channelName> <channelId>
+//   node assemble_findings.js <channelName> <channelId> [monthsBack]
 //     Public-audit mode. No OAuth. Pulls the given channel's videos through
 //     the same public Data API path competitor channels use, writes them to
 //     client_videos with data_source 'public_api', and leaves every
 //     Analytics-only field (avg_view_duration_seconds, avg_percentage_viewed,
 //     impressions, ctr, traffic_source_split) null. A public audit analyses
 //     one channel against its own video history, so competitors is left empty.
+//     With a monthsBack number (e.g. `... UCxxxx 6`) it pulls every upload
+//     from the last that many months; omit it for the 10-most-recent default.
 //
 // Output goes to a per-client file, findings-<slug>.json (e.g. "JB Eckl" ->
 // findings-jb-eckl.json), so audits for different clients don't overwrite
@@ -33,11 +35,25 @@ const DEFAULT_CLIENT_NAME = 'my channel';
 //   node assets/build_deck.js        findings-<slug>.json
 const clientName = process.argv[2] || DEFAULT_CLIENT_NAME;
 const publicChannelId = process.argv[3];
+// Public mode only: optional number of months of upload history to pull.
+const monthsBack = process.argv[4] !== undefined ? Number(process.argv[4]) : null;
+
+if (monthsBack !== null && (!Number.isFinite(monthsBack) || monthsBack <= 0)) {
+  console.error(`Invalid monthsBack argument "${process.argv[4]}" — expected a positive number.`);
+  process.exit(1);
+}
 
 // Filesystem-safe slug of the client / channel name.
 function clientSlug(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return slug || 'client';
+}
+
+// Date monthsBack calendar months before now.
+function monthsAgo(n) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - n);
+  return d;
 }
 
 const FINDINGS_PATH = `./findings-${clientSlug(clientName)}.json`;
@@ -79,6 +95,7 @@ function toPublicVideo(v) {
     video_id: v.video_id,
     title: v.title,
     published_at: v.published_at,
+    runtime_seconds: v.runtime_seconds ?? null,
     views: v.views,
     likes: v.likes,
     comments: v.comments,
@@ -180,9 +197,11 @@ async function buildClientFromOAuth() {
   };
 }
 
-// Public-audit mode: no OAuth. Pull the named channel's recent videos with the
-// public API key, exactly the way competitor channels are pulled.
-async function buildClientFromPublic(channelName, channelId) {
+// Public-audit mode: no OAuth. Pull the named channel's videos with the public
+// API key, exactly the way competitor channels are pulled. With months set,
+// pulls every upload from the last that many months; otherwise the 10 most
+// recent.
+async function buildClientFromPublic(channelName, channelId, months) {
   if (!process.env.YOUTUBE_API_KEY) {
     throw new Error('Missing YOUTUBE_API_KEY in .env');
   }
@@ -198,7 +217,9 @@ async function buildClientFromPublic(channelName, channelId) {
     process.exit(1);
   }
 
-  const videos = await fetchRecentVideos(channelId);
+  const videos = months
+    ? await fetchVideosSince(channelId, monthsAgo(months))
+    : await fetchRecentVideos(channelId);
 
   return {
     client: {
@@ -215,7 +236,7 @@ async function main() {
   const findings = loadFindings();
 
   const built = publicChannelId
-    ? await buildClientFromPublic(clientName, publicChannelId)
+    ? await buildClientFromPublic(clientName, publicChannelId, monthsBack)
     : await buildClientFromOAuth();
 
   findings.client = built.client;
@@ -241,8 +262,9 @@ async function main() {
   const mode = publicChannelId ? 'public audit' : 'OAuth';
   console.log(`Wrote client section (${mode}) to ${FINDINGS_PATH}:`, findings.client);
   if (built.clientVideos) {
+    const range = monthsBack ? `last ${monthsBack} month(s)` : '10 most recent';
     console.log(
-      `Wrote ${findings.client_videos.length} client video(s) with data_source=public_api.`
+      `Wrote ${findings.client_videos.length} client video(s) (${range}) with data_source=public_api.`
     );
   }
   if (publicChannelId) {

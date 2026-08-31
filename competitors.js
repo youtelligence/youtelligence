@@ -83,6 +83,19 @@ function rate(count, views) {
   return Number(((count / views) * 100).toFixed(2));
 }
 
+// Parses an ISO 8601 duration as returned by videos.list contentDetails.duration
+// (e.g. "PT10M33S", "PT1H2S", "P1DT2H", "PT0S") into whole seconds. Returns null
+// for anything it can't parse.
+function parseIsoDuration(iso) {
+  if (typeof iso !== 'string') return null;
+  const match = iso.match(
+    /^P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/
+  );
+  if (!match) return null;
+  const [weeks, days, hours, minutes, seconds] = match.slice(1).map((n) => Number(n || 0));
+  return weeks * 604800 + days * 86400 + hours * 3600 + minutes * 60 + seconds;
+}
+
 // Pulls a channel's 10 most recent uploads and computes normalized metrics.
 // Does not save anything to Supabase -- pair with saveSnapshots.
 async function fetchRecentVideos(channelId) {
@@ -110,17 +123,18 @@ async function fetchRecentVideos(channelId) {
   const videoIds = playlistData.items.map((item) => item.snippet.resourceId.videoId);
 
   const { data: videosData } = await youtube.videos.list({
-    part: ['statistics'],
+    part: ['statistics', 'contentDetails'],
     id: videoIds,
   });
 
-  const statsById = Object.fromEntries(
-    videosData.items.map((video) => [video.id, video.statistics])
+  const detailsById = Object.fromEntries(
+    videosData.items.map((video) => [video.id, video])
   );
 
   return playlistData.items.map((item) => {
     const videoId = item.snippet.resourceId.videoId;
-    const stats = statsById[videoId] || {};
+    const video = detailsById[videoId] || {};
+    const stats = video.statistics || {};
     const views = stats.viewCount != null ? Number(stats.viewCount) : null;
     const likes = stats.likeCount != null ? Number(stats.likeCount) : null;
     const comments = stats.commentCount != null ? Number(stats.commentCount) : null;
@@ -137,11 +151,102 @@ async function fetchRecentVideos(channelId) {
       likes,
       comments,
       published_at: item.snippet.publishedAt,
+      runtime_seconds: parseIsoDuration(video.contentDetails && video.contentDetails.duration),
       views_per_day: viewsPerDay,
       like_rate: rate(likes, views),
       comment_rate: rate(comments, views),
     };
   });
+}
+
+// Maps a playlistItems row + its videos.list entry into the record shape
+// fetchRecentVideos returns. Used by fetchVideosSince; fetchRecentVideos has a
+// parallel inline copy.
+function toVideoRecord(item, channelId, channelName, video) {
+  const stats = (video && video.statistics) || {};
+  const duration = video && video.contentDetails && video.contentDetails.duration;
+  const views = stats.viewCount != null ? Number(stats.viewCount) : null;
+  const likes = stats.likeCount != null ? Number(stats.likeCount) : null;
+  const comments = stats.commentCount != null ? Number(stats.commentCount) : null;
+  const viewsPerDay = views != null
+    ? Number((views / daysSincePublished(item.snippet.publishedAt)).toFixed(1))
+    : null;
+
+  return {
+    channel_id: channelId,
+    channel_name: channelName,
+    video_id: item.snippet.resourceId.videoId,
+    title: item.snippet.title,
+    views,
+    likes,
+    comments,
+    published_at: item.snippet.publishedAt,
+    runtime_seconds: parseIsoDuration(duration),
+    views_per_day: viewsPerDay,
+    like_rate: rate(likes, views),
+    comment_rate: rate(comments, views),
+  };
+}
+
+// Pages through a channel's uploads playlist (newest-first, 50 per page) and
+// returns every upload published on or after sinceDate (a Date). Stops paging
+// as soon as it hits a video older than sinceDate. Same field shape as
+// fetchRecentVideos; does not save anything to Supabase.
+async function fetchVideosSince(channelId, sinceDate) {
+  const youtube = createYoutubeClient();
+
+  const { data: channelData } = await youtube.channels.list({
+    part: ['snippet', 'contentDetails'],
+    id: [channelId],
+  });
+
+  const channel = channelData.items && channelData.items[0];
+  if (!channel) {
+    throw new Error(`No channel found for id ${channelId}`);
+  }
+
+  const channelName = channel.snippet.title;
+  const uploadsPlaylistId = channel.contentDetails.relatedPlaylists.uploads;
+  const sinceMs = sinceDate.getTime();
+
+  const items = [];
+  let pageToken;
+  let reachedCutoff = false;
+
+  do {
+    const { data } = await youtube.playlistItems.list({
+      part: ['snippet'],
+      playlistId: uploadsPlaylistId,
+      maxResults: 50,
+      pageToken,
+    });
+
+    for (const item of data.items) {
+      if (new Date(item.snippet.publishedAt).getTime() < sinceMs) {
+        reachedCutoff = true;
+        break;
+      }
+      items.push(item);
+    }
+
+    pageToken = reachedCutoff ? undefined : data.nextPageToken;
+  } while (pageToken);
+
+  if (items.length === 0) return [];
+
+  // videos.list also caps at 50 ids per call.
+  const detailsById = {};
+  for (let i = 0; i < items.length; i += 50) {
+    const ids = items.slice(i, i + 50).map((item) => item.snippet.resourceId.videoId);
+    const { data } = await youtube.videos.list({ part: ['statistics', 'contentDetails'], id: ids });
+    for (const video of data.items) {
+      detailsById[video.id] = video;
+    }
+  }
+
+  return items.map((item) =>
+    toVideoRecord(item, channelId, channelName, detailsById[item.snippet.resourceId.videoId] || {})
+  );
 }
 
 async function saveSnapshots(snapshots) {
@@ -166,6 +271,7 @@ module.exports = {
   lookupChannelId,
   getChannelTitle,
   fetchRecentVideos,
+  fetchVideosSince,
   saveSnapshots,
   saveCompetitorChannel,
 };
