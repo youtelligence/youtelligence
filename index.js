@@ -169,7 +169,7 @@ function renderOnboardPage({ title, step, headline, body }) {
 </head>
 <body>
 <main class="col">
-<p class="wordmark">Illumetrix</p>
+<p class="wordmark">illumetrix</p>
 <nav class="steps" aria-label="Onboarding progress">${steps}</nav>
 <div class="content">
 <h1>${headline}</h1>
