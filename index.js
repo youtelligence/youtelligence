@@ -271,48 +271,52 @@ app.post('/competitors', async (req, res) => {
     res.status(400).send('Missing client field.');
     return;
   }
+
+  let body;
   if (handles.length === 0) {
-    res.status(400).send('No competitor handles submitted.');
-    return;
-  }
+    // Every competitor field was left blank. That's a valid, complete state —
+    // nothing to resolve, so go straight to the completion page.
+    body = '<p>No competitors added yet.</p>';
+  } else {
+    const results = [];
+    for (const handle of handles) {
+      try {
+        const parsed = parseCompetitorInput(handle);
+        let channelId, title;
+        if (parsed.channelId) {
+          channelId = parsed.channelId;
+          title = await getChannelTitle(channelId);
+        } else {
+          ({ id: channelId, title } = await lookupChannelId(parsed.handle));
+        }
 
-  const results = [];
-  for (const handle of handles) {
-    try {
-      const parsed = parseCompetitorInput(handle);
-      let channelId, title;
-      if (parsed.channelId) {
-        channelId = parsed.channelId;
-        title = await getChannelTitle(channelId);
-      } else {
-        ({ id: channelId, title } = await lookupChannelId(parsed.handle));
+        await saveCompetitorChannel(client, channelId, title);
+        const snapshots = await fetchRecentVideos(channelId);
+        await saveSnapshots(snapshots);
+        results.push({ ok: true, name: title });
+      } catch (err) {
+        console.error(`Failed to process competitor ${handle}:`, err);
+        results.push({ ok: false, input: handle, reason: competitorFailureReason(err.message) });
       }
-
-      await saveCompetitorChannel(client, channelId, title);
-      const snapshots = await fetchRecentVideos(channelId);
-      await saveSnapshots(snapshots);
-      results.push({ ok: true, name: title });
-    } catch (err) {
-      console.error(`Failed to process competitor ${handle}:`, err);
-      results.push({ ok: false, input: handle, reason: competitorFailureReason(err.message) });
     }
-  }
 
-  const items = results
-    .map((r) =>
-      r.ok
-        ? `<li class="ok">${escapeHtml(r.name)}</li>`
-        : `<li class="fail">${escapeHtml(r.input)} — ${escapeHtml(r.reason)}</li>`
-    )
-    .join('\n');
+    const items = results
+      .map((r) =>
+        r.ok
+          ? `<li class="ok">${escapeHtml(r.name)}</li>`
+          : `<li class="fail">${escapeHtml(r.input)} — ${escapeHtml(r.reason)}</li>`
+      )
+      .join('\n');
+    body = `<ul class="results">
+${items}
+</ul>`;
+  }
 
   res.send(renderOnboardPage({
     title: 'Setup complete',
     step: 3,
     headline: 'Setup complete.',
-    body: `<ul class="results">
-${items}
-</ul>`,
+    body,
   }));
 });
 
